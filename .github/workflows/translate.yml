@@ -8,6 +8,9 @@ on:
       backfill_minutes:
         description: "Look back this many minutes (ignores saved position)"
         default: "0"
+      only:
+        description: "all, text or audio"
+        default: "all"
 
 permissions:
   contents: write
@@ -41,7 +44,7 @@ jobs:
           TRANSLATE_CHANNELS: ${{ secrets.TRANSLATE_CHANNELS }}
           OWNER: ${{ secrets.OWNER }}
           BACKFILL_MIN: ${{ inputs.backfill_minutes }}
-          DEBUG: ${{ inputs.backfill_minutes }}
+          ONLY: ${{ inputs.only }}
         run: |
           if [ -n "$BACKFILL_MIN" ] && [ "$BACKFILL_MIN" != "0" ]; then rm -f state.json; fi
           python translate.py

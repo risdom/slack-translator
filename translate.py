@@ -8,7 +8,7 @@ import os, json, time, tempfile, urllib.request, urllib.parse
 TOK=os.environ["SLACK_BOT_TOKEN"]; OWNER=os.environ["OWNER"]
 CHANNELS=json.loads(os.environ["TRANSLATE_CHANNELS"])  # {channel_id: channel_name} (or a plain list of IDs)
 NAMES=CHANNELS if isinstance(CHANNELS,dict) else {}; STATE=os.environ.get("STATE_FILE","state.json")
-BACKFILL=float(os.environ.get("BACKFILL_MIN") or 15)
+BACKFILL=float(os.environ.get("BACKFILL_MIN") or 15); ONLY=os.environ.get("ONLY") or "all"   # all | text | audio (manual reruns)
 
 def slack(method,http="GET",**p):
     url="https://slack.com/api/"+method; hdr={"Authorization":"Bearer "+TOK}
@@ -76,13 +76,13 @@ def who(u):
 sent=0
 for ch,m in todo:
     out=[]; text=(m.get("text") or "").strip()
-    if len([c for c in text if c.isalpha()])>=4:
+    if ONLY!="audio" and len([c for c in text if c.isalpha()])>=4:
         lang=det.detect_language_of(text)
         if lang and lang!=Language.ENGLISH:
             try: en=to_english(text,lang)
             except Exception as e: en=None; print("translate failed",e)
             if en and en.strip().lower()!=text.lower(): out.append((lang.name.title(),en))
-    for f in m.get("files") or []:
+    for f in (m.get("files") or []) if ONLY!="text" else []:
         if (f.get("mimetype") or "").startswith(("audio/","video/")) or f.get("subtype") in ("slack_audio","slack_video"):
             try:
                 src,en=audio_to_english(f)
