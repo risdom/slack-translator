@@ -2,11 +2,12 @@
 """translate.py — DM the owner an English translation of every non-English message and voice/video clip
 posted in the watched Slack channels since the last run. Free, local models only:
 lingua (language ID), Argos Translate (text), faster-whisper task=translate (audio).
-Env: SLACK_BOT_TOKEN, TRANSLATE_CHANNELS (JSON list of channel IDs), OWNER (Slack user ID to DM),
+Env: SLACK_BOT_TOKEN, TRANSLATE_CHANNELS (JSON {channel_id: name}), OWNER (Slack user ID to DM),
      STATE_FILE (default state.json), BACKFILL_MIN (on first run / manual run, look back this many minutes)."""
 import os, json, time, tempfile, urllib.request, urllib.parse
 TOK=os.environ["SLACK_BOT_TOKEN"]; OWNER=os.environ["OWNER"]
-CHANNELS=json.loads(os.environ["TRANSLATE_CHANNELS"]); STATE=os.environ.get("STATE_FILE","state.json")
+CHANNELS=json.loads(os.environ["TRANSLATE_CHANNELS"])  # {channel_id: channel_name} (or a plain list of IDs)
+NAMES=CHANNELS if isinstance(CHANNELS,dict) else {}; STATE=os.environ.get("STATE_FILE","state.json")
 BACKFILL=float(os.environ.get("BACKFILL_MIN") or 15)
 
 def slack(method,http="GET",**p):
@@ -90,7 +91,7 @@ for ch,m in todo:
     if not out: continue
     try: link=slack("chat.getPermalink",channel=ch,message_ts=m["ts"])["permalink"]
     except RuntimeError: link=None
-    chan=slack("conversations.info",channel=ch)["channel"]["name"]
+    chan=NAMES.get(ch,ch)
     body="\n\n".join(f"*{lbl} → English:*\n>{en.replace(chr(10),chr(10)+'>')}" for lbl,en in out)
     slack("chat.postMessage","POST",channel=OWNER,unfurl_links=False,
           text=f":globe_with_meridians: *#{chan}* · {who(m['user'])}" + (f" · <{link}|original>" if link else "") + "\n"+body)
