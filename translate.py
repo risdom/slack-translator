@@ -25,9 +25,9 @@ print("state file:",os.path.exists(STATE),"| backfill min:",BACKFILL,"| now",tim
 now=time.time(); todo=[]
 for ch in CHANNELS:
     oldest=state.get(ch) or str(now-BACKFILL*60)
-    try: msgs=slack("conversations.history",channel=ch,oldest=oldest,limit=200)["messages"]
+    try: resp=slack("conversations.history",channel=ch,oldest=oldest,limit=200); msgs=resp["messages"]
     except RuntimeError as e: print("skip",ch,e); continue
-    print(f"  {ch}: since {time.strftime('%m-%d %H:%M',time.gmtime(float(oldest)))}Z got={len(msgs)} from_state={ch in state}")
+    print(f"  {ch}: since {time.strftime('%m-%d %H:%M',time.gmtime(float(oldest)))}Z got={len(msgs)} from_state={ch in state} echo_oldest={resp.get('oldest')} more={resp.get('has_more')} meta={resp.get('response_metadata')} warn={resp.get('warning')}", flush=True)
     for m in reversed(msgs):                                   # oldest first
         if m.get("user") in (None,OWNER) or m.get("bot_id") or m.get("subtype") in ("channel_join","channel_leave","bot_message"): continue
         todo.append((ch,m))
