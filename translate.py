@@ -21,12 +21,13 @@ def slack(method,http="GET",**p):
         return r
 
 state=json.load(open(STATE)) if os.path.exists(STATE) else {}
+print("state file:",os.path.exists(STATE),"| backfill min:",BACKFILL,"| now",time.strftime("%m-%d %H:%M",time.gmtime()))
 now=time.time(); todo=[]
 for ch in CHANNELS:
     oldest=state.get(ch) or str(now-BACKFILL*60)
     try: msgs=slack("conversations.history",channel=ch,oldest=oldest,limit=200)["messages"]
     except RuntimeError as e: print("skip",ch,e); continue
-    if os.environ.get("DEBUG"): print(f"  {ch}: oldest={oldest} got={len(msgs)}")
+    print(f"  {ch}: since {time.strftime('%m-%d %H:%M',time.gmtime(float(oldest)))}Z got={len(msgs)} from_state={ch in state}")
     for m in reversed(msgs):                                   # oldest first
         if m.get("user") in (None,OWNER) or m.get("bot_id") or m.get("subtype") in ("channel_join","channel_leave","bot_message"): continue
         todo.append((ch,m))
