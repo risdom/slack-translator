@@ -41,6 +41,7 @@ jobs:
           TRANSLATE_CHANNELS: ${{ secrets.TRANSLATE_CHANNELS }}
           OWNER: ${{ secrets.OWNER }}
           BACKFILL_MIN: ${{ inputs.backfill_minutes }}
+          DEBUG: ${{ inputs.backfill_minutes }}
         run: |
           if [ -n "$BACKFILL_MIN" ] && [ "$BACKFILL_MIN" != "0" ]; then rm -f state.json; fi
           python translate.py

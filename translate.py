@@ -25,6 +25,7 @@ for ch in CHANNELS:
     oldest=state.get(ch) or str(now-BACKFILL*60)
     try: msgs=slack("conversations.history",channel=ch,oldest=oldest,limit=200)["messages"]
     except RuntimeError as e: print("skip",ch,e); continue
+    if os.environ.get("DEBUG"): print(f"  {ch}: oldest={oldest} got={len(msgs)}")
     for m in reversed(msgs):                                   # oldest first
         if m.get("user") in (None,OWNER) or m.get("bot_id") or m.get("subtype") in ("channel_join","channel_leave","bot_message"): continue
         todo.append((ch,m))
