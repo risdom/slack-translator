@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""translate.py — reply in-channel (thread + feed) with an English translation of every non-English message and
-voice/video clip posted in the watched Slack channels since the last run. Free: Google Translate's public web endpoint
+"""translate.py — show the owner (only them) an English translation of every non-English message and
+voice/video clip posted in the watched Slack channels since the last run, as an "only visible to you" note in the channel plus a DM copy. Free: Google Translate's public web endpoint
 (language ID + text), faster-whisper (audio transcription); lingua + Argos Translate as the offline fallback.
 Env: SLACK_BOT_TOKEN, TRANSLATE_CHANNELS (JSON {channel_id: name}), OWNER (Slack user ID; their own messages are skipped, TEST_DM=true sends there instead),
      STATE_FILE (default state.json), BACKFILL_MIN (on first run / manual run, look back this many minutes)."""
@@ -137,13 +137,18 @@ for ch,m in todo:
     if not out: continue
     esc=lambda t: t.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")   # no live mentions/links in the reply
     body="\n\n".join(f":globe_with_meridians: *{lbl} → English:*\n>"+esc(en).replace("\n","\n>") for lbl,en in out)
-    if TEST_DM:                                                 # manual check: send to the owner's DM instead of the channel
+    head=f"*{who(m['user'])}* · "
+    if TEST_DM:                                                 # manual check: DM only
+        slack("chat.postMessage","POST",channel=OWNER,unfurl_links=False,text=f"[test] #{NAMES.get(ch,ch)} · "+head+"\n"+body)
+    else:
+        # "Only visible to you" in the channel feed, nobody else sees it. Slack only shows these to an open client
+        # and drops them on reload, so a DM copy (with a link to the original) keeps a record.
+        try: slack("chat.postEphemeral","POST",channel=ch,user=OWNER,text=head+"\n"+body)
+        except RuntimeError as e: print("ephemeral failed",ch,e)
         try: link=slack("chat.getPermalink",channel=ch,message_ts=m["ts"])["permalink"]
         except RuntimeError: link=None
         slack("chat.postMessage","POST",channel=OWNER,unfurl_links=False,
-              text=f"[test] would reply in *#{NAMES.get(ch,ch)}* to {who(m['user'])}" + (f" · <{link}|original>" if link else "") + "\n"+body)
-    else:                                                       # reply in the message's thread, also shown in the channel feed
-        slack("chat.postMessage","POST",channel=ch,thread_ts=m["ts"],reply_broadcast=True,unfurl_links=False,unfurl_media=False,text=body)
+              text=f"*#{NAMES.get(ch,ch)}* · "+head+(f"<{link}|original>" if link else "")+"\n"+body)
     sent+=1
 json.dump(state,open(STATE,"w"))
 print(f"sent {sent} translation(s)")
