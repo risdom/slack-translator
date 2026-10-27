@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """translate.py — DM the owner an English translation of every non-English message and voice/video clip
-posted in the watched Slack channels since the last run. Free, local models only:
-lingua (language ID), Argos Translate (text), faster-whisper task=translate (audio).
+posted in the watched Slack channels since the last run. Free: Google Translate's public web endpoint
+(language ID + text), faster-whisper (audio transcription); lingua + Argos Translate as the offline fallback.
 Env: SLACK_BOT_TOKEN, TRANSLATE_CHANNELS (JSON {channel_id: name}), OWNER (Slack user ID to DM),
      STATE_FILE (default state.json), BACKFILL_MIN (on first run / manual run, look back this many minutes)."""
-import os, json, time, tempfile, urllib.request, urllib.parse
+import os, json, time, tempfile, urllib.request, urllib.parse, urllib.error
 TOK=os.environ["SLACK_BOT_TOKEN"]; OWNER=os.environ["OWNER"]
 CHANNELS=json.loads(os.environ["TRANSLATE_CHANNELS"])  # {channel_id: channel_name} (or a plain list of IDs)
 NAMES=CHANNELS if isinstance(CHANNELS,dict) else {}; STATE=os.environ.get("STATE_FILE","state.json")
@@ -40,10 +40,29 @@ LANGS=[Language.ENGLISH,Language.PORTUGUESE,Language.FRENCH,Language.SPANISH,Lan
        Language.DUTCH,Language.ARABIC,Language.URDU,Language.HINDI,Language.TAGALOG,Language.SERBIAN,Language.RUSSIAN,
        Language.TURKISH,Language.INDONESIAN,Language.CHINESE]
 det=LanguageDetectorBuilder.from_languages(*LANGS).with_minimum_relative_distance(0.15).build()
+GOOGLE=["https://translate.googleapis.com/translate_a/single","https://clients5.google.com/translate_a/single"]
+def google(text):
+    """-> (source language code, English text). Long text goes in paragraph chunks to keep the GET URL short."""
+    chunks,cur=[],""
+    for para in text.split("\n"):
+        if cur and len(cur)+len(para)>1500: chunks.append(cur); cur=""
+        cur+=("\n" if cur else "")+para
+    chunks.append(cur); src=None; out=[]
+    for c in chunks:
+        for a in range(4):
+            url=GOOGLE[a%2]+"?"+urllib.parse.urlencode({"client":"gtx","sl":"auto","tl":"en","dt":"t","q":c})
+            try: r=json.loads(urllib.request.urlopen(urllib.request.Request(url,headers={"User-Agent":"Mozilla/5.0"}),timeout=30).read()); break
+            except urllib.error.HTTPError as e:
+                if a==3: raise
+                time.sleep(3*(a+1))
+        src=src or r[2]; out.append("".join(seg[0] for seg in r[0] if seg and seg[0]))
+    return src,"\n".join(out)
+LANG_NAMES={"pt":"Portuguese","es":"Spanish","fr":"French","it":"Italian","de":"German","nl":"Dutch","ar":"Arabic",
+            "ur":"Urdu","hi":"Hindi","tl":"Tagalog","fil":"Filipino","sr":"Serbian","ru":"Russian","tr":"Turkish","id":"Indonesian",
+            "zh-CN":"Chinese","zh-TW":"Chinese","ja":"Japanese","ko":"Korean","pl":"Polish","ro":"Romanian","uk":"Ukrainian"}
 _argos={}
-def to_english(text,lang):
+def argos(text,code):
     import argostranslate.package, argostranslate.translate
-    code=lang.iso_code_639_1.name.lower()
     if code not in _argos:
         argostranslate.package.update_package_index()
         pk=[p for p in argostranslate.package.get_available_packages() if p.from_code==code and p.to_code=="en"]
@@ -54,6 +73,19 @@ def to_english(text,lang):
             _argos[code]=True
     if not _argos[code]: return None
     return argostranslate.translate.translate(text,code,"en")
+def to_english(text):
+    """-> (language name, English) or None when the text is English / can't be translated."""
+    try:
+        src,en=google(text)
+        if src=="en" or src.startswith("en-"): return None
+        return LANG_NAMES.get(src,src),en
+    except Exception as e: print("google failed, offline fallback:",e)
+    lang=det.detect_language_of(text)
+    if not lang or lang==Language.ENGLISH: return None
+    en=argos(text,lang.iso_code_639_1.name.lower())
+    return (lang.name.title(),en) if en else None
+try: print("google check:",google("Olá, tudo bem?"))
+except Exception as e: print("google check FAILED (offline fallback in use):",e)
 _whisper=None
 def audio_to_english(f):
     global _whisper
@@ -63,9 +95,13 @@ def audio_to_english(f):
     data=urllib.request.urlopen(urllib.request.Request(url,headers={"Authorization":"Bearer "+TOK}),timeout=300).read()
     with tempfile.NamedTemporaryFile(suffix="."+(f.get("filetype") or "m4a")) as t:
         t.write(data); t.flush()
-        segs,info=_whisper.transcribe(t.name,task="translate",vad_filter=True)
+        segs,info=_whisper.transcribe(t.name,vad_filter=True)          # transcript in the spoken language
         text=" ".join(s.text.strip() for s in segs).strip()
-    return info.language,text
+        if not text or info.language=="en": return info.language,text
+        try: return info.language,google(text)[1]                      # Google handles names/slang better than Whisper's translate
+        except Exception as e: print("google failed on audio, whisper translate:",e)
+        segs,_=_whisper.transcribe(t.name,task="translate",vad_filter=True)
+        return info.language," ".join(s.text.strip() for s in segs).strip()
 
 names={}
 def who(u):
@@ -78,16 +114,14 @@ sent=0
 for ch,m in todo:
     out=[]; text=(m.get("text") or "").strip()
     if ONLY!="audio" and len([c for c in text if c.isalpha()])>=4:
-        lang=det.detect_language_of(text)
-        if lang and lang!=Language.ENGLISH:
-            try: en=to_english(text,lang)
-            except Exception as e: en=None; print("translate failed",e)
-            if en and en.strip().lower()!=text.lower(): out.append((lang.name.title(),en))
+        try: tr=to_english(text)
+        except Exception as e: tr=None; print("translate failed",e)
+        if tr and tr[1].strip().lower()!=text.lower(): out.append(tr)
     for f in (m.get("files") or []) if ONLY!="text" else []:
         if (f.get("mimetype") or "").startswith(("audio/","video/")) or f.get("subtype") in ("slack_audio","slack_video"):
             try:
                 src,en=audio_to_english(f)
-                if en: out.append((f"voice clip, spoken {src}" if src!="en" else "voice clip, English",en))
+                if en: out.append((f"voice clip, spoken {LANG_NAMES.get(src,src)}" if src!="en" else "voice clip, English",en))
             except Exception as e: print("audio failed",e)
     if not out: continue
     try: link=slack("chat.getPermalink",channel=ch,message_ts=m["ts"])["permalink"]
