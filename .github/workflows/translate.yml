@@ -51,7 +51,7 @@ jobs:
           TRANSLATE_CHANNELS: ${{ secrets.TRANSLATE_CHANNELS }}
           OWNER: ${{ secrets.OWNER }}
           BACKFILL_MIN: ${{ inputs.backfill_minutes }}
-          ONLY: ${{ inputs.only }}
+          ONLY: ${{ inputs.only || 'audio' }}   # text is handled instantly by the Cloudflare Worker (worker/)
           TEST_DM: ${{ inputs.test_dm }}
         run: |
           if [ -n "$BACKFILL_MIN" ] && [ "$BACKFILL_MIN" != "0" ]; then rm -f state.json; fi
