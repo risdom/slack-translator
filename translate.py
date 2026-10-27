@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""translate.py — DM the owner an English translation of every non-English message and voice/video clip
-posted in the watched Slack channels since the last run. Free: Google Translate's public web endpoint
+"""translate.py — reply in-channel (thread + feed) with an English translation of every non-English message and
+voice/video clip posted in the watched Slack channels since the last run. Free: Google Translate's public web endpoint
 (language ID + text), faster-whisper (audio transcription); lingua + Argos Translate as the offline fallback.
-Env: SLACK_BOT_TOKEN, TRANSLATE_CHANNELS (JSON {channel_id: name}), OWNER (Slack user ID to DM),
+Env: SLACK_BOT_TOKEN, TRANSLATE_CHANNELS (JSON {channel_id: name}), OWNER (Slack user ID; their own messages are skipped, TEST_DM=true sends there instead),
      STATE_FILE (default state.json), BACKFILL_MIN (on first run / manual run, look back this many minutes)."""
 import os, json, time, tempfile, urllib.request, urllib.parse, urllib.error
 TOK=os.environ["SLACK_BOT_TOKEN"]; OWNER=os.environ["OWNER"]
 CHANNELS=json.loads(os.environ["TRANSLATE_CHANNELS"])  # {channel_id: channel_name} (or a plain list of IDs)
 NAMES=CHANNELS if isinstance(CHANNELS,dict) else {}; STATE=os.environ.get("STATE_FILE","state.json")
-BACKFILL=float(os.environ.get("BACKFILL_MIN") or 15); ONLY=os.environ.get("ONLY") or "all"   # all | text | audio (manual reruns)
+BACKFILL=float(os.environ.get("BACKFILL_MIN") or 15); ONLY=os.environ.get("ONLY") or "all"
+TEST_DM=os.environ.get("TEST_DM")=="true"   # all | text | audio (manual reruns)
 
 def slack(method,http="GET",**p):
     url="https://slack.com/api/"+method; hdr={"Authorization":"Bearer "+TOK}
@@ -110,9 +111,19 @@ def who(u):
         except RuntimeError: names[u]=u
     return names[u]
 
+import re
+def plain(t):
+    """Slack markup -> plain text, so a translation never re-pings anyone or mangles links."""
+    t=re.sub(r"<@([UW][A-Z0-9]+)(?:\|[^>]*)?>",lambda x:"@"+who(x.group(1)),t)
+    t=re.sub(r"<!(here|channel|everyone)[^>]*>",r"@\1",t)
+    t=re.sub(r"<!subteam\^[A-Z0-9]+\|?([^>]*)>",lambda x:x.group(1) or "@group",t)
+    t=re.sub(r"<#[A-Z0-9]+\|([^>]*)>",r"#\1",t)
+    t=re.sub(r"<(https?://[^|>]+)\|([^>]+)>",r"\2 (\1)",t)
+    return re.sub(r"<(https?://[^>]+)>",r"\1",t)
+
 sent=0
 for ch,m in todo:
-    out=[]; text=(m.get("text") or "").strip()
+    out=[]; text=plain((m.get("text") or "").strip())
     if ONLY!="audio" and len([c for c in text if c.isalpha()])>=4:
         try: tr=to_english(text)
         except Exception as e: tr=None; print("translate failed",e)
@@ -124,12 +135,15 @@ for ch,m in todo:
                 if en: out.append((f"voice clip, spoken {LANG_NAMES.get(src,src)}" if src!="en" else "voice clip, English",en))
             except Exception as e: print("audio failed",e)
     if not out: continue
-    try: link=slack("chat.getPermalink",channel=ch,message_ts=m["ts"])["permalink"]
-    except RuntimeError: link=None
-    chan=NAMES.get(ch,ch)
-    body="\n\n".join(f"*{lbl} → English:*\n>{en.replace(chr(10),chr(10)+'>')}" for lbl,en in out)
-    slack("chat.postMessage","POST",channel=OWNER,unfurl_links=False,
-          text=f":globe_with_meridians: *#{chan}* · {who(m['user'])}" + (f" · <{link}|original>" if link else "") + "\n"+body)
+    esc=lambda t: t.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")   # no live mentions/links in the reply
+    body="\n\n".join(f":globe_with_meridians: *{lbl} → English:*\n>"+esc(en).replace("\n","\n>") for lbl,en in out)
+    if TEST_DM:                                                 # manual check: send to the owner's DM instead of the channel
+        try: link=slack("chat.getPermalink",channel=ch,message_ts=m["ts"])["permalink"]
+        except RuntimeError: link=None
+        slack("chat.postMessage","POST",channel=OWNER,unfurl_links=False,
+              text=f"[test] would reply in *#{NAMES.get(ch,ch)}* to {who(m['user'])}" + (f" · <{link}|original>" if link else "") + "\n"+body)
+    else:                                                       # reply in the message's thread, also shown in the channel feed
+        slack("chat.postMessage","POST",channel=ch,thread_ts=m["ts"],reply_broadcast=True,unfurl_links=False,unfurl_media=False,text=body)
     sent+=1
 json.dump(state,open(STATE,"w"))
 print(f"sent {sent} translation(s)")

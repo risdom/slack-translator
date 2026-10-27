@@ -11,6 +11,9 @@ on:
       only:
         description: "all, text or audio"
         default: "all"
+      test_dm:
+        description: "Send to the owner's DM instead of the channels"
+        default: "false"
 
 permissions:
   contents: write
@@ -49,6 +52,7 @@ jobs:
           OWNER: ${{ secrets.OWNER }}
           BACKFILL_MIN: ${{ inputs.backfill_minutes }}
           ONLY: ${{ inputs.only }}
+          TEST_DM: ${{ inputs.test_dm }}
         run: |
           if [ -n "$BACKFILL_MIN" ] && [ "$BACKFILL_MIN" != "0" ]; then rm -f state.json; fi
           python translate.py
