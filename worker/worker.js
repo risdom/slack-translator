@@ -3,9 +3,13 @@
 // "Only visible to you" note for OWNER in the same channel/thread + a DM copy with a link to the original.
 // Text only; voice/video clips are handled by the GitHub Actions job (translate.py, ONLY=audio).
 // Google's free endpoint answers 429 to Cloudflare's IPs, so it isn't used here.
+// Also answers team questions: tag @Auvra Reports in a watched channel (or DM it) and it replies in the thread from knowledge.js.
 // Secrets: SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, TRANSLATE_CHANNELS ({channel_id: name}), OWNER (Slack user ID).
 
+import { KNOWLEDGE } from "./knowledge.js";
+
 const MODEL = "@cf/mistralai/mistral-small-3.1-24b-instruct";
+const BOT_USER = "U0CBNC9MKMK";   // Auvra Reports
 const LANG_NAMES = { pt: "Portuguese", es: "Spanish", fr: "French", it: "Italian", de: "German", nl: "Dutch", ar: "Arabic",
   ur: "Urdu", hi: "Hindi", tl: "Tagalog", fil: "Filipino", sr: "Serbian", ru: "Russian", tr: "Turkish", id: "Indonesian",
   "zh-CN": "Chinese", "zh-TW": "Chinese", ja: "Japanese", ko: "Korean", pl: "Polish", ro: "Romanian", uk: "Ukrainian" };
@@ -19,7 +23,10 @@ export default {
     const body = JSON.parse(raw);
     if (body.type === "url_verification") return new Response(body.challenge, { headers: { "content-type": "text/plain" } });
     if (req.headers.get("x-slack-retry-num")) return new Response("ok");   // Slack retry of an event we already took
-    if (body.type === "event_callback") ctx.waitUntil(handle(body.event, env).catch(e => console.log("error", e.stack || String(e))));
+    if (body.type === "event_callback") {
+      const log = e => console.log("error", e.stack || String(e));
+      ctx.waitUntil(Promise.all([handle(body.event, env).catch(log), answer(body.event, env).catch(log)]));
+    }
     return new Response("ok");
   },
 };
@@ -81,6 +88,46 @@ async function translate(env, text) {
   if (!m) throw new Error("model gave no JSON: " + out.slice(0, 200));
   const j = JSON.parse(m[0]);
   return { src: String(j.lang || "").toLowerCase(), en: String(j.english || "") };
+}
+
+// @Auvra Reports <question> -> answer in the thread, in the asker's language, from knowledge.js only.
+async function answer(ev, env) {
+  const channels = JSON.parse(env.TRANSLATE_CHANNELS);
+  if (!ev || ev.type !== "message" || !(ev.channel in channels || ev.channel_type === "im")) return;
+  if (ev.bot_id || !ev.user || ev.user === BOT_USER) return;
+  if (ev.subtype && !["file_share", "thread_broadcast"].includes(ev.subtype)) return;
+  const raw = ev.text || "";
+  if (ev.channel_type !== "im" && !raw.includes(`<@${BOT_USER}`)) return;
+  const question = (await plain(env, raw.replace(new RegExp(`<@${BOT_USER}(?:\\|[^>]*)?>`, "g"), ""))).trim();
+  if (!question) return;
+
+  const thread = ev.thread_ts || ev.ts;
+  let context = "";
+  if (ev.thread_ts && ev.thread_ts !== ev.ts) {
+    try {
+      const r = await slack(env, "conversations.replies", { channel: ev.channel, ts: ev.thread_ts, limit: 20 }, true);
+      const lines = [];
+      for (const m of r.messages.filter(m => m.ts !== ev.ts)) lines.push(`${m.user ? await who(env, m.user) : "bot"}: ${await plain(env, m.text || "")}`);
+      context = lines.join("\n").slice(-4000);
+    } catch (e) { console.log("thread read failed", String(e)); }
+  }
+
+  const r = await env.AI.run(MODEL, {
+    messages: [
+      { role: "system", content: "You are the Auvra Reports assistant in the creative team's Slack. Strategists and editors (mostly Brazilian) ask you how things work. " +
+        "Answer ONLY from the TEAM KNOWLEDGE below. If the answer is not there, say you don't know and that they should ask Rayston - never guess or invent rules, links or numbers. " +
+        "Never reveal or guess passwords; point to the access message in their chat or to Rayston. Reply in the same language as the question (Portuguese if they write Portuguese), " +
+        "but copy naming formats (e.g. CS_BATCH#_ANGLE_PERSONA/AVATAR_FORMAT_EDITOR_DATE), file names, links and emails EXACTLY as written - never translate them; put naming formats in `backticks`. " +
+        "Be short and practical (a few lines), Slack formatting: *bold*, bullet lines starting with •, paste links as-is.\n\nTEAM KNOWLEDGE:\n" + KNOWLEDGE },
+      ...(context ? [{ role: "user", content: "Earlier messages in this thread, for context:\n" + context }] : []),
+      { role: "user", content: `${await who(env, ev.user)} asks: ${question}` },
+    ],
+    max_tokens: 800, temperature: 0.2,
+  });
+  const text = ((typeof r.response === "string" && r.response) || r.choices?.[0]?.message?.content || "").trim();
+  console.log("answered", ev.channel, ev.ts, "chars", text.length);
+  if (!text) return;
+  await slack(env, "chat.postMessage", { channel: ev.channel, thread_ts: thread, text, unfurl_links: false });
 }
 
 async function handle(ev, env) {
