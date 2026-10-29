@@ -8,3 +8,11 @@ binding = "AI"
 
 [observability]
 enabled = true
+
+[[kv_namespaces]]
+binding = "KB"
+id = "19ad8dd544ca4272bf8c9b0ed440ab9d"
+
+# Re-read the 100x Ecom SOPs in Notion every 10 minutes (only pages edited since the last run are fetched).
+[triggers]
+crons = ["*/10 * * * *"]
