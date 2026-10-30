@@ -144,7 +144,11 @@ function sum(rows, extra) {
   for (const k of keys) t[k] = rows.reduce((s, r) => s + (r[k] || 0), 0);
   return derive(t);
 }
+// Same key as mirror.js batchKey: the ad's batch without H#, dates, CS prefix and editor.
+const batchKey = (n) => { const k = (n || "").toUpperCase().replace(/((?:BATCH|B)\d+)H\d+(-H\d+)*(?=_)/, "$1").replace(/(_[\d/.-]+)+$/, "").split("_").slice(1, -1).join("_"); return /^(BATCH|B)\d+_./.test(k) ? k : ""; };   // "" = not a convention name, never matched
 function ownerOf(r) {
+  const own = data.owners || {};   // from Creative HQ: which strategist's brief this batch came from
+  const k = batchKey(r.name); if (k && own[k]) return own[k];
   const S = data.strategists || {}, up = (s) => (s || "").toUpperCase();
   for (const [cs, rule] of Object.entries(S)) if ((rule.ad || []).some((p) => up(r.name).startsWith(up(p))) || (rule.adset || []).some((p) => up(r.adset).startsWith(up(p)))) return cs;
   return "Other";

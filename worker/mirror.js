@@ -8,6 +8,25 @@
 import { audit } from "./audit.js";
 import { PAGE, ADMIN_PAGE } from "./mirror_page.js";
 import { newToken } from "./access.js";
+import { chq } from "./queue.js";
+
+// Same batch key the page uses: name without H#, trailing date(s), the CS prefix and the editor, so an ad
+// ("JV_BATCH2H1-H2-H3_..._RAFAELA_10/27/26_10/30/26") matches the Creative HQ briefs it was launched from.
+export const batchKey = (n) => { const k = (n || "").toUpperCase().replace(/((?:BATCH|B)\d+)H\d+(-H\d+)*(?=_)/, "$1").replace(/(_[\d/.-]+)+$/, "").split("_").slice(1, -1).join("_"); return /^(BATCH|B)\d+_./.test(k) ? k : ""; };   // "" = not a convention name, never matched
+const SMALL = new Set(["da", "de", "do", "dos", "das", "e"]);
+const fullName = (s) => s.trim().toLowerCase().split(/\s+/).map((w, i) => i && SMALL.has(w) ? w : w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+
+// Which strategist owns each batch, straight from Creative HQ (no guessed prefixes). Cached 30 minutes in KV "mirror_owners".
+async function owners(env) {
+  const c = await env.KB.get("mirror_owners", "json");
+  if (c && Date.now() - c.at < 30 * 60 * 1000 || !env.CHQ_KEY) return c?.map || {};
+  try {
+    const map = {};
+    for (const a of (await chq(env, "list_launch_queue", { view: "all" })).ads) { const k = batchKey(a.title); if (k) map[k] ||= fullName(a.strategist || a.workspace); }
+    await env.KB.put("mirror_owners", JSON.stringify({ at: Date.now(), map }));
+    return map;
+  } catch { return c?.map || {}; }
+}
 
 const GRAPH = "https://graph.facebook.com/v23.0/";
 const PRESETS = new Set(["today", "yesterday", "last_3d", "last_7d", "last_14d", "last_30d", "this_month", "last_month", "maximum"]);
@@ -137,9 +156,13 @@ export async function mirror(req, env, ctx) {
   const key = new Request(`https://mirror.cache/all/${range.preset || range.since + "_" + range.until}/${by || "main"}`);
   const forViewer = async (res) => {   // only admin links get the Strategist filter; strip it for everyone else
     if (by) return res;
-    const { strategists, admin, access, ...body } = await res.json();
+    const { strategists: _s, owners: _o, admin: _a, access: _x, ...body } = await res.json();
     body.layout = (await env.KB.get("mirror_layout", "json")) || null;   // the owner's columns = everyone's columns
-    return json(who.admin ? { ...body, admin: true, strategists: (await env.KB.get("mirror_cs", "json")) || {}, access: "/ads-admin/" + (await env.KB.get("mirror_admin")) } : body);
+    if (!who.admin) return json(body);
+    // Strategist filter: full names. Ads are matched to their Creative HQ brief first; KV "mirror_cs" prefixes only cover older ads.
+    const strategists = (await env.KB.get("mirror_cs", "json")) || {}, own = await owners(env);
+    for (const n of Object.values(own)) strategists[n] ||= {};
+    return json({ ...body, admin: true, strategists, owners: own, access: "/ads-admin/" + (await env.KB.get("mirror_admin")) });
   };
   const hit = await caches.default.match(key);
   if (hit) return forViewer(hit);

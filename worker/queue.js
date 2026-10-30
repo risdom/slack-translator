@@ -10,7 +10,7 @@ import { auditBatch, report } from "./prelaunch.js";
 const CHQ = "https://self-host-creative-system.web.app/mcp";
 const SETTLE_MS = 15 * 60 * 1000;
 
-async function chq(env, name, args = {}) {
+export async function chq(env, name, args = {}) {
   const r = await fetch(CHQ, { method: "POST", body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }),
     headers: { Authorization: "Bearer " + env.CHQ_KEY, "content-type": "application/json", accept: "application/json, text/event-stream" } });
   const j = await r.json();
