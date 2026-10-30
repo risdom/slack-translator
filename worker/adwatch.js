@@ -31,7 +31,7 @@ export async function adWatch(env, slack) {
   if (changed) await env.KB.put("rejected", JSON.stringify(st));
 }
 
-// POST /adcheck  {rejected: [{id, name, campaign}]}  -> the runner's view of Meta; returns the ads waiting for an appeal.
+// POST /adcheck  {rejected: [{id, name, campaign, adset, reason}]}  -> the runner's view of Meta; returns the ads waiting for an appeal.
 // POST /appealed {ids: [...], ok, note}               -> what the runner appealed (or failed to).
 export async function appealApi(req, env, path) {
   const st = await load(env), now = Date.now(), body = await req.json();
@@ -42,7 +42,8 @@ export async function appealApi(req, env, path) {
       if (st.ads[a.id]) continue;
       // The first report only records what was already rejected before the watchdog existed.
       st.ads[a.id] = { name: a.name, campaign: a.campaign || "", seen: now, appealed: st.baseline ? null : "before watchdog" };
-      if (st.baseline) await audit(env, { kind: "ad_rejected", actor_name: "Meta", channel_name: a.campaign, text: `${a.name} (${a.id})`,
+      if (!st.baseline) continue;
+      await audit(env, { kind: "ad_rejected", actor_name: "Meta", channel_name: a.campaign, text: `${a.name} (${a.id})\n${a.reason || ""}`,
         flag: "ad rejected by Meta - auto-appeal queued" });
     }
     for (const [id, a] of Object.entries(st.ads)) {
