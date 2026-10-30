@@ -119,10 +119,10 @@ export async function mirror(req, env, ctx) {
   const range = PRESETS.has(preset) ? { preset } : (/^\d{4}-\d{2}-\d{2}$/.test(since || "") && /^\d{4}-\d{2}-\d{2}$/.test(until || "")) ? { since, until } : { preset: "last_7d" };
   const by = BREAKDOWNS[url.searchParams.get("breakdown")] ? url.searchParams.get("breakdown") : null;
   const key = new Request(`https://mirror.cache/all/${range.preset || range.since + "_" + range.until}/${by || "main"}`);
-  const forViewer = async (res) => {   // only admin links get the Strategist filter
-    if (by || !who.admin) return res;
-    const body = await res.json();
-    return json({ ...body, admin: true, strategists: (await env.KB.get("mirror_cs", "json")) || {} });
+  const forViewer = async (res) => {   // only admin links get the Strategist filter; strip it for everyone else
+    if (by) return res;
+    const { strategists, admin, ...body } = await res.json();
+    return json(who.admin ? { ...body, admin: true, strategists: (await env.KB.get("mirror_cs", "json")) || {} } : body);
   };
   const hit = await caches.default.match(key);
   if (hit) return forViewer(hit);
