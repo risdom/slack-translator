@@ -11,6 +11,7 @@
 import { syncNotion } from "./notion.js";
 import { audit, askFlag, botActivity, dailySummary, auditApi, keyGuard } from "./audit.js";
 import { adWatch, appealApi } from "./adwatch.js";
+import { syncAccess } from "./access.js";
 import { mirror, mirrorAdmin } from "./mirror.js";
 
 const MODEL = "@cf/mistralai/mistral-small-3.1-24b-instruct";
@@ -53,6 +54,7 @@ export default {
     else ctx.waitUntil(Promise.all([
       syncNotion(env).catch(e => { log(e); return audit(env, { kind: "error", text: "Notion sync: " + String(e).slice(0, 300) }); }),
       adWatch(env, slack).catch(e => { log(e); return audit(env, { kind: "error", text: "Rejected-ads watchdog: " + String(e).slice(0, 300), flag: "watchdog crashed" }); }),
+      syncAccess(env).catch(e => { log(e); return audit(env, { kind: "error", text: "Ads mirror auto access: " + String(e).slice(0, 300) }); }),
     ]));
   },
 };
