@@ -86,7 +86,7 @@
     <label>Breakdown<select id="breakdown"><option value="">None</option><option value="age">Age</option><option value="gender">Gender</option>
       <option value="platform">Platform</option><option value="placement">Placement</option><option value="device">Impression device</option></select></label>
     <div class="cols"><button class="btn" id="colsBtn" type="button" aria-expanded="false">Customize columns</button><div class="colmenu" id="colmenu" hidden></div></div>
-    <button class="btn" id="export" type="button">Export CSV</button>
+    <button class="btn" id="export" type="button" hidden>Export CSV</button>
   </div>
   <div class="crumbs" id="crumbs" hidden></div>
 
@@ -201,6 +201,7 @@ function crumbs() {
   c.hidden = !c.children.length;
 }
 function exportCsv() {
+  if (!data || !data.admin) return;   // owner only
   const rows = [...$("body").querySelectorAll("tr")].map((tr) => [...tr.children].map((td) => td.querySelector(".rname, .drill")?.textContent ?? td.textContent));
   const head = [...$("head").children].map((th) => th.textContent.replace(/ [▲▼]$/, ""));
   const csv = [head, ...rows].map((r) => r.map((v) => `"${String(v).replace(/"/g, '""').trim()}"`).join(",")).join("\n");
@@ -258,7 +259,7 @@ async function load(force) {
     const r = await fetch(location.pathname.replace(/\/$/, "") + "/data?" + qs + (force ? "&t=" + Date.now() : ""), { cache: "no-store" });
     const j = await r.json(); if (j.error) throw new Error(j.error);
     data = j; for (const row of data.rows) row._cs = ownerOf(row);
-    $("csL").hidden = !data.admin; if (!data.admin) $("cs").value = "";
+    $("csL").hidden = !data.admin; $("export").hidden = !data.admin; if (!data.admin) $("cs").value = "";
     fillSelect("cs", [...Object.keys(data.strategists || {}), "Other"]); fillSelect("campaign", data.rows.map((r) => r.campaign)); fillSelect("adset", data.rows.map((r) => r.adset));
     $("dot").className = "dot"; $("updated").textContent = "Live · updated " + new Date(j.fetched).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     await loadBreakdown(qs);
