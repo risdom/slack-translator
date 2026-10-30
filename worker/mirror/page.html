@@ -21,6 +21,7 @@
   button, select, input { font:inherit; color:inherit; }
   .btn { border:1px solid var(--line); background:var(--panel); border-radius:6px; padding:6px 12px; cursor:pointer; font-weight:500; }
   .btn:hover { border-color:var(--accent); }
+  a.btn { color:inherit; text-decoration:none; display:inline-block; }
   .bar { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px; display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
   .bar select, .bar input { border:1px solid var(--line); background:var(--panel); border-radius:6px; padding:6px 8px; min-width:0; }
   .bar input[type=search] { flex:1 1 220px; }
@@ -52,8 +53,8 @@
   .chip.DISAPPROVED, .chip.WITH_ISSUES { color:var(--bad); background:color-mix(in srgb, var(--bad) 14%, transparent); }
   .chip.IN_PROCESS, .chip.PENDING_REVIEW, .chip.PREAPPROVED { color:var(--warn); background:color-mix(in srgb, var(--warn) 16%, transparent); }
   .note { color:var(--muted); font-size:12px; margin:0; }
-  .crumbs { display:flex; flex-wrap:wrap; gap:6px; align-items:center; font-size:13px; }
-  .crumb { border:1px solid var(--accent); color:var(--accent); background:var(--accent-soft); border-radius:99px; padding:3px 10px; cursor:pointer; font-weight:500; }
+  .preview-note { flex-basis:100%; margin:0; font-size:13px; color:var(--warn); }
+  #asViewer[aria-pressed=true] { border-color:var(--warn); color:var(--warn); }
   .drill { all:unset; cursor:pointer; color:var(--accent); font-weight:600; overflow-wrap:anywhere; }
   .drill:hover { text-decoration:underline; }
   tr.slice td { color:var(--muted); font-size:12.5px; }
@@ -65,8 +66,9 @@
 </style></head>
 <body><div class="wrap">
   <header>
-    <h1>Auvra Ads Mirror <span>· viewing as __WHO__</span></h1>
-    <div class="live"><i class="dot" id="dot"></i><span id="updated">Loading…</span><button class="btn" id="refresh" type="button">Refresh</button></div>
+    <h1>Auvra Ads Mirror <span id="who">· viewing as __WHO__</span></h1>
+    <p class="preview-note" id="previewNote" hidden>You're seeing the page exactly as an invited strategist does: your columns, no column controls, no Strategist filter, no Export CSV.</p>
+    <div class="live"><a class="btn" id="access" href="#" target="_blank" rel="noopener" hidden>Manage access</a><button class="btn" id="asViewer" type="button" hidden aria-pressed="false">View as strategist</button><i class="dot" id="dot"></i><span id="updated">Loading…</span><button class="btn" id="refresh" type="button">Refresh</button></div>
   </header>
 
   <div class="bar">
@@ -81,15 +83,14 @@
     <label>Ad set<select id="adset"><option value="">All ad sets</option></select></label>
     <label>Delivery<select id="status"><option value="">All</option><option value="ACTIVE">Active</option><option value="REVIEW">In review</option><option value="REJECTED">Rejected / issues</option><option value="OFF">Off</option></select></label>
     <input type="search" id="q" placeholder="Search by name…" aria-label="Search by name">
-    <label>Columns<select id="preset-cols"><option value="performance">Performance</option><option value="delivery">Delivery</option><option value="engagement">Engagement</option>
+    <label id="colsL">Columns<select id="preset-cols"><option value="performance">Performance</option><option value="delivery">Delivery</option><option value="engagement">Engagement</option>
       <option value="video">Video engagement</option><option value="conversions">Conversions</option><option value="custom">Custom</option></select></label>
     <label>Breakdown<select id="breakdown"><option value="">None</option><option value="age">Age</option><option value="gender">Gender</option>
       <option value="platform">Platform</option><option value="placement">Placement</option><option value="device">Impression device</option></select></label>
     <div class="cols"><button class="btn" id="colsBtn" type="button" aria-expanded="false">Customize columns</button><div class="colmenu" id="colmenu" hidden></div></div>
     <button class="btn" id="export" type="button" hidden>Export CSV</button>
   </div>
-  <div class="crumbs" id="crumbs" hidden></div>
-
+  
   <div class="tabs" role="tablist">
     <button role="tab" data-level="ad" aria-selected="true">Ads</button>
     <button role="tab" data-level="adset" aria-selected="false">Ad sets</button>
@@ -118,7 +119,8 @@ const PRESET_COLS = {
 const DEFAULT = PRESET_COLS.performance;
 let shown, preset = "performance";
 try { preset = localStorage.getItem("mirror-preset") || "performance"; shown = preset === "custom" ? JSON.parse(localStorage.getItem("mirror-cols")) || DEFAULT : PRESET_COLS[preset]; } catch { shown = DEFAULT; }
-let data = null, level = "ad", sort = { key: "spend", dir: -1 }, timer = null, bd = null;
+let viewerPreview = false;
+let data = null, level = "ad", sort = { key: "spend", dir: -1 }, timer = null, bd = null, pick = null, drilled = false;   // pick = ad ids from a Hooks click
 const fmt = { "$": (v) => v == null ? "—" : "$" + v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
   n: (v) => v == null ? "—" : Math.round(v).toLocaleString("en-US"), f: (v) => v == null ? "—" : v.toFixed(2),
   "%": (v) => v == null ? "—" : (v * 100).toFixed(2) + "%", x: (v) => v == null ? "—" : v.toFixed(2) };
@@ -127,9 +129,21 @@ function derive(r) {
   const d = (a, b) => (b ? a / b : null);
   return { ...r, cpm: d(r.spend * 1000, r.impressions), ctr: d(r.link_clicks, r.impressions), cpc: d(r.spend, r.link_clicks), cost_atc: d(r.spend, r.atc),
     cpa: d(r.spend, r.purchases), roas: d(r.revenue, r.spend), hook: d(r.video3s, r.impressions), hold: d(r.thruplay, r.video3s),
-    frequency: r.reach ? r.impressions / r.reach : null };
+    frequency: r.reach ? r.impressions / r.reach : null,
+    ...Object.fromEntries(Object.keys(r).filter((k) => k.startsWith("cc_")).map((k) => ["ccc_" + k.slice(3), d(r.spend, r[k])])) };
 }
-function sum(rows, extra) { const t = { ...extra }; for (const k of SUMS) t[k] = rows.reduce((s, r) => s + (r[k] || 0), 0); return derive(t); }
+// Custom conversions from Meta become columns on their own: count, cost per, and value.
+function allCols() {
+  const cc = (data && data.customConversions) || [];
+  return [...COLS, ...cc.flatMap((c) => [["cc_" + c.id, c.name, "n"], ["ccc_" + c.id, "Cost per " + c.name, "$"], ["ccv_" + c.id, c.name + " value", "$"]])];
+}
+const visible = () => { const all = new Map(allCols().map((c) => [c[0], c])); return shown.map((k) => all.get(k)).filter(Boolean); };
+function sum(rows, extra) {
+  const t = { ...extra }, keys = new Set(SUMS);
+  for (const r of rows) for (const k in r) if (k.startsWith("cc_") || k.startsWith("ccv_")) keys.add(k);
+  for (const k of keys) t[k] = rows.reduce((s, r) => s + (r[k] || 0), 0);
+  return derive(t);
+}
 function ownerOf(r) {
   const S = data.strategists || {}, up = (s) => (s || "").toUpperCase();
   for (const [cs, rule] of Object.entries(S)) if ((rule.ad || []).some((p) => up(r.name).startsWith(up(p))) || (rule.adset || []).some((p) => up(r.adset).startsWith(up(p)))) return cs;
@@ -139,7 +153,8 @@ const deliv = (s) => s === "ACTIVE" ? "ACTIVE" : ["IN_PROCESS","PENDING_REVIEW",
 const LABEL = { ACTIVE: "Active", IN_PROCESS: "In review", PENDING_REVIEW: "In review", PREAPPROVED: "In review", DISAPPROVED: "Rejected", WITH_ISSUES: "Issue", OFF: "Off" };
 function filtered() {
   const q = $("q").value.trim().toLowerCase(), cs = $("cs").value, c = $("campaign").value, a = $("adset").value, st = $("status").value;
-  return data.rows.filter((r) => (!cs || r._cs === cs) && (!c || r.campaign === c) && (!a || r.adset === a) && (!st || deliv(r.status) === st)
+  const only = pick && new Set(pick.ids);
+  return data.rows.filter((r) => (!only || only.has(r.id)) && (!cs || r._cs === cs) && (!c || r.campaign === c) && (!a || r.adset === a) && (!st || deliv(r.status) === st)
     && (!q || (r.name + " " + r.adset + " " + r.campaign).toLowerCase().includes(q)));
 }
 function fillSelect(id, values, keep) {
@@ -161,7 +176,11 @@ function nameCell(r, kind) {
     t.append(n, sub); box.append(img, t); td.append(box);
   } else if (kind === "campaign" || kind === "adset") {   // click to drill down, like Ads Manager
     const b = cell("button", r.name, "drill"); b.type = "button"; b.title = kind === "campaign" ? "View its ad sets" : "View its ads";
-    b.addEventListener("click", () => { $(kind).value = r.name; setLevel(kind === "campaign" ? "adset" : "ad"); });
+    b.addEventListener("click", () => { drilled = true; $(kind).value = r.name; setLevel(kind === "campaign" ? "adset" : "ad"); });
+    td.append(b); if (r.sub) td.append(cell("div", r.sub, "sub"));
+  } else if (kind === "hook") {   // click a batch or a hook to see its ads, with thumbnails and Preview
+    const b = cell("button", r.name, "drill"); b.type = "button"; b.title = "View these ads";
+    b.addEventListener("click", () => { drilled = true; pick = { ids: r._ids }; setLevel("ad"); });
     td.append(b); if (r.sub) td.append(cell("div", r.sub, "sub"));
   } else { td.append(cell("div", r.name, "rname")); if (r.sub) td.append(cell("div", r.sub, "sub")); }
   return td;
@@ -169,7 +188,7 @@ function nameCell(r, kind) {
 function rowEl(r, kind, cls) {
   const tr = document.createElement("tr"); if (cls) tr.className = cls;
   tr.append(nameCell(r, kind));
-  for (const [k, , f] of COLS) if (shown.includes(k)) tr.append(cell("td", fmt[f](r[k])));
+  for (const [k, , f] of visible()) tr.append(cell("td", fmt[f](r[k])));
   return tr;
 }
 // Breakdown rows under a row: the selected breakdown's slices, summed over the row's ads.
@@ -192,16 +211,17 @@ function group(rows, key, sub) {
 function setLevel(l) {
   level = l; document.querySelectorAll(".tabs button").forEach((x) => x.setAttribute("aria-selected", String(x.dataset.level === l))); render();
 }
-function crumbs() {
-  const c = $("crumbs"); c.replaceChildren();
-  for (const id of ["campaign", "adset"]) if ($(id).value) {
-    const b = cell("button", (id === "campaign" ? "Campaign: " : "Ad set: ") + $(id).value + "  ×", "crumb"); b.type = "button";
-    b.addEventListener("click", () => { $(id).value = ""; if (id === "campaign") $("adset").value = ""; render(); }); c.append(b);
-  }
-  c.hidden = !c.children.length;
+// Owner tools (Strategist filter, Export CSV) show only for admin links, and hide while previewing as a strategist.
+function applyRole() {
+  const owner = !!(data && data.admin) && !viewerPreview;
+  $("asViewer").hidden = !(data && data.admin);
+  $("access").hidden = !owner; if (data && data.access) $("access").href = data.access;   // invite / remove strategists
+  $("csL").hidden = !owner; $("export").hidden = !owner; $("previewNote").hidden = !viewerPreview;
+  $("colsL").hidden = !owner; $("colsBtn").parentElement.hidden = !owner;   // strategists get the owner's columns
+  if (!owner && $("cs").value) { $("cs").value = ""; render(); }
 }
 function exportCsv() {
-  if (!data || !data.admin) return;   // owner only
+  if (!data || !data.admin || viewerPreview) return;   // owner only
   const rows = [...$("body").querySelectorAll("tr")].map((tr) => [...tr.children].map((td) => td.querySelector(".rname, .drill")?.textContent ?? td.textContent));
   const head = [...$("head").children].map((th) => th.textContent.replace(/ [▲▼]$/, ""));
   const csv = [head, ...rows].map((r) => r.map((v) => `"${String(v).replace(/"/g, '""').trim()}"`).join(",")).join("\n");
@@ -213,11 +233,10 @@ const bySort = (a, b) => { const x = sort.key === "name" ? a.name : a[sort.key],
 function render() {
   const head = $("head"); head.replaceChildren();
   const names = { ad: "Ad name", adset: "Ad set", campaign: "Campaign", hook: "Batch / hook" };
-  const hs = [["name", names[level]], ...COLS.filter(([k]) => shown.includes(k)).map(([k, l]) => [k, l])];
+  const hs = [["name", names[level]], ...visible().map(([k, l]) => [k, l])];
   for (const [k, l] of hs) { const th = cell("th", l, k === "name" ? "name" : ""); th.dataset.key = k;
     th.setAttribute("aria-sort", sort.key === k ? (sort.dir > 0 ? "ascending" : "descending") : "none"); head.append(th); }
   const body = $("body"); body.replaceChildren();
-  crumbs();
   if (!data) return;
   const rows = filtered().map(derive);
   if (!rows.length) { const tr = document.createElement("tr"); const td = cell("td", "No ads match these filters.", "msg"); td.colSpan = hs.length; tr.append(td); body.append(tr); return; }
@@ -237,19 +256,33 @@ function render() {
     if (!hooked.length) { const tr = document.createElement("tr"); const td = cell("td", "No ads in this view use the CS_BATCH#H1/H2/H3 naming yet.", "msg"); td.colSpan = hs.length; tr.append(td); body.append(tr); return; }
     const batches = group(hooked, batch, (rs) => `${rs.length} hook ads`).sort(bySort);
     for (const b of batches) {
-      body.append(rowEl({ ...b, name: b.name }, "x", "group"));
+      body.append(rowEl(b, "hook", "group"));
       const hooks = hooked.filter((r) => batch(r) === b.name);
       group(hooks, (r) => (r.name.match(/H(\d+(?:-H\d+)*)(?=_)/) || [, "—"])[1].replace(/^/, "H").replace(/-H/g, "+H"), (rs) => rs.map((x) => LABEL[x.status] || "Off").join(", "))
-        .sort(bySort).forEach((h) => body.append(rowEl(h, "x")));
+        .sort(bySort).forEach((h) => body.append(rowEl(h, "hook")));
     }
   }
 }
 function colMenu() {
   const m = $("colmenu"); m.replaceChildren();
-  for (const [k, l] of COLS) { const lab = document.createElement("label"); const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = shown.includes(k); cb.id = "col-" + k;
-    cb.addEventListener("change", () => { shown = COLS.map(([x]) => x).filter((x) => x === k ? cb.checked : shown.includes(x)); preset = "custom"; $("preset-cols").value = "custom";
-      try { localStorage.setItem("mirror-cols", JSON.stringify(shown)); localStorage.setItem("mirror-preset", "custom"); } catch {} render(); });
+  for (const [k, l] of allCols()) { const lab = document.createElement("label"); const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = shown.includes(k); cb.id = "col-" + k;
+    cb.addEventListener("change", () => { shown = cb.checked ? [...shown, k] : shown.filter((x) => x !== k);   // new columns go at the end, in the order ticked
+      preset = "custom"; $("preset-cols").value = "custom"; saveLayout(); render(); });
     lab.append(cb, document.createTextNode(l)); m.append(lab); }
+}
+// The owner's columns are the team's columns: saved to the server and loaded by every strategist.
+let saveTimer = null;
+function saveLayout() {
+  try { localStorage.setItem("mirror-cols", JSON.stringify(shown)); localStorage.setItem("mirror-preset", preset); } catch {}
+  if (!data || !data.admin || viewerPreview) return;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => fetch(location.pathname.replace(/\/$/, "") + "/layout", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ preset, columns: shown }) }).then(() => { $("updated").textContent = "Team columns saved"; }), 600);
+}
+let layoutApplied = false;
+function applyLayout() {
+  if (layoutApplied || !data || !data.layout) return;
+  layoutApplied = true; shown = data.layout.columns; preset = data.layout.preset || "custom"; $("preset-cols").value = preset;
 }
 async function load(force) {
   const p = $("preset").value, qs = new URLSearchParams(p === "custom" ? { since: $("since").value, until: $("until").value } : { preset: p });
@@ -259,7 +292,7 @@ async function load(force) {
     const r = await fetch(location.pathname.replace(/\/$/, "") + "/data?" + qs + (force ? "&t=" + Date.now() : ""), { cache: "no-store" });
     const j = await r.json(); if (j.error) throw new Error(j.error);
     data = j; for (const row of data.rows) row._cs = ownerOf(row);
-    $("csL").hidden = !data.admin; $("export").hidden = !data.admin; if (!data.admin) $("cs").value = "";
+    applyLayout(); applyRole(); colMenu();
     fillSelect("cs", [...Object.keys(data.strategists || {}), "Other"]); fillSelect("campaign", data.rows.map((r) => r.campaign)); fillSelect("adset", data.rows.map((r) => r.adset));
     $("dot").className = "dot"; $("updated").textContent = "Live · updated " + new Date(j.fetched).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     await loadBreakdown(qs);
@@ -276,19 +309,25 @@ async function loadBreakdown(qs) {
 $("head").addEventListener("click", (e) => { const th = e.target.closest("th"); if (!th) return; const k = th.dataset.key;
   sort = { key: k, dir: sort.key === k ? -sort.dir : (k === "name" ? 1 : -1) }; render(); });
 document.querySelector(".tabs").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; level = b.dataset.level;
+  if (drilled) { drilled = false; pick = null; $("campaign").value = ""; $("adset").value = ""; }   // tabs go back to the full list after a click-through
   document.querySelectorAll(".tabs button").forEach((x) => x.setAttribute("aria-selected", String(x === b))); render(); });
 $("preset").addEventListener("change", () => { const c = $("preset").value === "custom"; $("sinceL").hidden = !c; $("untilL").hidden = !c; if (!c) load(); });
 for (const id of ["since", "until"]) $(id).addEventListener("change", () => load());
-for (const id of ["cs", "campaign", "adset", "status"]) $(id).addEventListener("change", render);
-$("q").addEventListener("input", render);
+// Touching a filter yourself ends a click-through: no hidden hook filter, and tabs keep your choice.
+const manual = () => { drilled = false; pick = null; render(); };
+for (const id of ["cs", "campaign", "adset", "status"]) $(id).addEventListener("change", manual);
+$("q").addEventListener("input", manual);
 $("refresh").addEventListener("click", () => load(true));
 $("preset-cols").value = preset;
 $("preset-cols").addEventListener("change", () => { preset = $("preset-cols").value;
   if (preset !== "custom") shown = PRESET_COLS[preset];
-  try { localStorage.setItem("mirror-preset", preset); } catch {} colMenu(); render(); });
+  saveLayout(); colMenu(); render(); });
 $("breakdown").addEventListener("change", async () => { $("updated").textContent = "Loading breakdown…";
   try { await loadBreakdown(); $("updated").textContent = "Live · breakdown loaded"; } catch (e) { $("updated").textContent = String(e.message || e); } render(); });
 $("export").addEventListener("click", exportCsv);
+$("asViewer").addEventListener("click", () => { viewerPreview = !viewerPreview;
+  $("asViewer").setAttribute("aria-pressed", String(viewerPreview)); $("asViewer").textContent = viewerPreview ? "Back to owner view" : "View as strategist";
+  applyRole(); });
 $("colsBtn").addEventListener("click", () => { const m = $("colmenu"); m.hidden = !m.hidden; $("colsBtn").setAttribute("aria-expanded", String(!m.hidden)); });
 document.addEventListener("click", (e) => { if (!e.target.closest(".cols")) $("colmenu").hidden = true; });
 colMenu(); render(); load();

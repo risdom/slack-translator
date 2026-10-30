@@ -48,7 +48,16 @@ function metrics(r) {
     lpv: act(r.actions, "landing_page_view", "omni_landing_page_view"),
     video3s: act(r.actions, "video_view"),
     thruplay: act(r.video_thruplay_watched_actions, "video_view"),
+    ...customConversions(r),
   };
+}
+
+// Every custom conversion Meta reports for the row, as cc_<id> (count) and ccv_<id> (value) - new ones appear automatically.
+function customConversions(r) {
+  const out = {};
+  for (const a of r.actions || []) if (a.action_type.startsWith("offsite_conversion.custom.")) out["cc_" + a.action_type.split(".").pop()] = Number(a.value);
+  for (const a of r.action_values || []) if (a.action_type.startsWith("offsite_conversion.custom.")) out["ccv_" + a.action_type.split(".").pop()] = Number(a.value);
+  return out;
 }
 
 // Budgets shown read-only beside campaign and ad set names (CBO budget, ad set minimum/daily budget).
@@ -111,6 +120,13 @@ export async function mirror(req, env, ctx) {
       flag: "someone used an invalid or revoked Ads mirror link" }));
     return new Response("This link isn't valid or your access was removed. Ask Rayston for access.", { status: 404 });
   }
+  if (sub === "layout" && req.method === "POST") {
+    if (!who.admin) return json({ error: "Only the owner sets the team's columns." }, 403);
+    const { preset, columns } = await req.json();
+    if (!Array.isArray(columns) || columns.length > 60 || columns.some((c) => typeof c !== "string" || c.length > 40)) return json({ error: "Bad layout" }, 400);
+    await env.KB.put("mirror_layout", JSON.stringify({ preset: String(preset || "custom").slice(0, 20), columns, by: who.name, at: new Date().toISOString() }));
+    return json({ saved: true });
+  }
   if (sub !== "data") {
     ctx.waitUntil(audit(env, { kind: "mirror_view", actor_name: who.name, text: "opened the Ads mirror" }));
     return new Response(PAGE.replace("__WHO__", who.name.replace(/[<>&"]/g, "")), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
@@ -121,14 +137,17 @@ export async function mirror(req, env, ctx) {
   const key = new Request(`https://mirror.cache/all/${range.preset || range.since + "_" + range.until}/${by || "main"}`);
   const forViewer = async (res) => {   // only admin links get the Strategist filter; strip it for everyone else
     if (by) return res;
-    const { strategists, admin, ...body } = await res.json();
-    return json(who.admin ? { ...body, admin: true, strategists: (await env.KB.get("mirror_cs", "json")) || {} } : body);
+    const { strategists, admin, access, ...body } = await res.json();
+    body.layout = (await env.KB.get("mirror_layout", "json")) || null;   // the owner's columns = everyone's columns
+    return json(who.admin ? { ...body, admin: true, strategists: (await env.KB.get("mirror_cs", "json")) || {}, access: "/ads-admin/" + (await env.KB.get("mirror_admin")) } : body);
   };
   const hit = await caches.default.match(key);
   if (hit) return forViewer(hit);
   try {
     const body = by ? { range, by, fetched: new Date().toISOString(), rows: await breakdown(env, by, range) }
-      : { range, fetched: new Date().toISOString(), budgets: await budgets(env), rows: await load(env, null, range) };
+      : { range, fetched: new Date().toISOString(), budgets: await budgets(env),
+          customConversions: (await pages(env, `${env.META_ACCOUNT}/customconversions`, { fields: "id,name", limit: "200" }, 1)).map((c) => ({ id: c.id, name: c.name })),
+          rows: await load(env, null, range) };
     const res = Response.json(body,
       { headers: { "cache-control": "max-age=120" } });
     ctx.waitUntil(caches.default.put(key, res.clone()));
