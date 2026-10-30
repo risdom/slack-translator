@@ -76,7 +76,7 @@
       <option value="this_month">This month</option><option value="last_month">Last month</option><option value="maximum">Maximum</option><option value="custom">Custom…</option></select></label>
     <label id="sinceL" hidden>From<input type="date" id="since"></label>
     <label id="untilL" hidden>To<input type="date" id="until"></label>
-    <label>Strategist<select id="cs"><option value="">All strategists</option></select></label>
+    <label id="csL" hidden>Strategist<select id="cs"><option value="">All strategists</option></select></label>
     <label>Campaign<select id="campaign"><option value="">All campaigns</option></select></label>
     <label>Ad set<select id="adset"><option value="">All ad sets</option></select></label>
     <label>Delivery<select id="status"><option value="">All</option><option value="ACTIVE">Active</option><option value="REVIEW">In review</option><option value="REJECTED">Rejected / issues</option><option value="OFF">Off</option></select></label>
@@ -258,6 +258,7 @@ async function load(force) {
     const r = await fetch(location.pathname.replace(/\/$/, "") + "/data?" + qs + (force ? "&t=" + Date.now() : ""), { cache: "no-store" });
     const j = await r.json(); if (j.error) throw new Error(j.error);
     data = j; for (const row of data.rows) row._cs = ownerOf(row);
+    $("csL").hidden = !data.admin; if (!data.admin) $("cs").value = "";
     fillSelect("cs", [...Object.keys(data.strategists || {}), "Other"]); fillSelect("campaign", data.rows.map((r) => r.campaign)); fillSelect("adset", data.rows.map((r) => r.adset));
     $("dot").className = "dot"; $("updated").textContent = "Live · updated " + new Date(j.fetched).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
     await loadBreakdown(qs);

@@ -119,15 +119,20 @@ export async function mirror(req, env, ctx) {
   const range = PRESETS.has(preset) ? { preset } : (/^\d{4}-\d{2}-\d{2}$/.test(since || "") && /^\d{4}-\d{2}-\d{2}$/.test(until || "")) ? { since, until } : { preset: "last_7d" };
   const by = BREAKDOWNS[url.searchParams.get("breakdown")] ? url.searchParams.get("breakdown") : null;
   const key = new Request(`https://mirror.cache/all/${range.preset || range.since + "_" + range.until}/${by || "main"}`);
+  const forViewer = async (res) => {   // only admin links get the Strategist filter
+    if (by || !who.admin) return res;
+    const body = await res.json();
+    return json({ ...body, admin: true, strategists: (await env.KB.get("mirror_cs", "json")) || {} });
+  };
   const hit = await caches.default.match(key);
-  if (hit) return hit;
+  if (hit) return forViewer(hit);
   try {
     const body = by ? { range, by, fetched: new Date().toISOString(), rows: await breakdown(env, by, range) }
-      : { range, fetched: new Date().toISOString(), strategists: (await env.KB.get("mirror_cs", "json")) || {}, budgets: await budgets(env), rows: await load(env, null, range) };
+      : { range, fetched: new Date().toISOString(), budgets: await budgets(env), rows: await load(env, null, range) };
     const res = Response.json(body,
       { headers: { "cache-control": "max-age=120" } });
     ctx.waitUntil(caches.default.put(key, res.clone()));
-    return res;
+    return forViewer(res);
   } catch (e) {
     return json({ error: "Meta didn't answer: " + String(e.message || e).slice(0, 200) + ". Try again in a minute." }, 502);
   }
