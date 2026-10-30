@@ -21,6 +21,7 @@ export default {
     if (req.method !== "POST") return new Response("slack-translator is running");
     const raw = await req.text();
     if (!(await verified(req, raw, env.SLACK_SIGNING_SECRET))) return new Response("bad signature", { status: 401 });
+    if ((req.headers.get("content-type") || "").includes("application/x-www-form-urlencoded")) return command(new URLSearchParams(raw), env);
     const body = JSON.parse(raw);
     if (body.type === "url_verification") return new Response(body.challenge, { headers: { "content-type": "text/plain" } });
     if (req.headers.get("x-slack-retry-num")) return new Response("ok");   // Slack retry of an event we already took
@@ -34,6 +35,17 @@ export default {
     ctx.waitUntil(syncNotion(env).catch(e => console.log("notion sync error", e.stack || String(e))));
   },
 };
+
+// /cs-onboarding [@person] and /video-onboarding [@person]: post the matching Notion onboarding page in the channel.
+async function command(p, env) {
+  const kind = { "/cs-onboarding": "cs", "/video-onboarding": "video" }[p.get("command")];
+  const json = o => new Response(JSON.stringify(o), { headers: { "content-type": "application/json" } });
+  if (!kind) return json({ response_type: "ephemeral", text: "Unknown command." });
+  const pack = await env.KB.get("onboard:" + kind);
+  if (!pack) return json({ response_type: "ephemeral", text: "The onboarding page hasn't synced from Notion yet - try again in 10 minutes." });
+  const who = (p.get("text") || "").trim();
+  return json({ response_type: "in_channel", unfurl_links: false, text: (who ? `:wave: Welcome ${who}! / Bem-vindo(a) ${who}!\n\n` : "") + pack });
+}
 
 async function verified(req, raw, secret) {
   const ts = req.headers.get("x-slack-request-timestamp"), sig = req.headers.get("x-slack-signature") || "";

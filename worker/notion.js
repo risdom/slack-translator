@@ -31,10 +31,14 @@ export async function syncNotion(env) {
   for (const p of pages) {
     if (meta[p.id] === p.last_edited_time) continue;
     if (calls >= BUDGET) { pending++; continue; }
-    const lines = [];
-    try { await blocks(notion, p.id, 0, lines, () => calls < BUDGET + 8); }
+    const lines = [], slack = [];
+    try { await blocks(notion, p.id, 0, lines, () => calls < BUDGET + 8, slack); }
     catch (e) { console.log("page failed", p.id, String(e)); pending++; continue; }
     await env.KB.put("page:" + p.id, JSON.stringify({ title: pageTitle(p), text: redact(lines.join("\n")) }));
+    // The onboarding pages are posted as-is by /cs-onboarding and /video-onboarding (Slack formatting, not redacted:
+    // whatever Rayston writes on those pages is what new hires get). The intro line above the first heading is skipped.
+    const cmd = (pageTitle(p).match(/\/(cs|video)-onboarding/) || [])[1];
+    if (cmd) await env.KB.put("onboard:" + cmd, slack.slice(Math.max(0, slack.findIndex(l => l.startsWith("*")))).join("\n"));
     meta[p.id] = p.last_edited_time;
     changed = true;
   }
@@ -55,7 +59,7 @@ export async function syncNotion(env) {
   console.log("notion sync", { pages: pages.length, calls, changed, pending });
 }
 
-async function blocks(notion, id, depth, out, more) {
+async function blocks(notion, id, depth, out, more, slack) {
   let cursor;
   do {
     if (!more()) throw new Error("out of request budget");
@@ -63,7 +67,9 @@ async function blocks(notion, id, depth, out, more) {
     for (const b of r.results) {
       const line = blockText(b);
       if (line.trim()) out.push("  ".repeat(depth) + line);
-      if (b.has_children && b.type !== "child_page" && b.type !== "child_database") await blocks(notion, b.id, depth + 1, out, more);
+      const s = slackText(b);
+      if (s.trim()) slack.push("  ".repeat(depth) + s);
+      if (b.has_children && b.type !== "child_page" && b.type !== "child_database") await blocks(notion, b.id, depth + 1, out, more, slack);
     }
     cursor = r.has_more ? r.next_cursor : null;
   } while (cursor);
@@ -82,6 +88,26 @@ function blockText(b) {
     case "bookmark": case "embed": case "link_preview": return d.url || "";
     case "video": case "file": case "image": case "pdf": return [d.external?.url || d.name || "", rt(d.caption)].filter(Boolean).join(" ");
     default: return rt(d.rich_text);
+  }
+}
+
+// Same block, as Slack mrkdwn (bold/code/links kept), for the onboarding commands.
+function slackText(b) {
+  const d = b[b.type] || {};
+  const rt = a => (a || []).map(t => {
+    let s = t.plain_text || "";
+    if (!s.trim()) return s;
+    if (t.annotations?.code) s = "`" + s + "`";
+    else if (t.annotations?.bold) s = "*" + s.trim() + "*" + (s.endsWith(" ") ? " " : "");
+    return t.href && !s.includes(t.href) ? `<${t.href}|${s}>` : s;
+  }).join("");
+  switch (b.type) {
+    case "heading_1": case "heading_2": case "heading_3": return "*" + d.rich_text.map(t => t.plain_text).join("") + "*";
+    case "bulleted_list_item": return "• " + rt(d.rich_text);
+    case "numbered_list_item": return "- " + rt(d.rich_text);
+    case "code": return "`" + d.rich_text.map(t => t.plain_text).join("") + "`";
+    case "divider": return "";
+    default: return blockText(b) && rt(d.rich_text);
   }
 }
 
