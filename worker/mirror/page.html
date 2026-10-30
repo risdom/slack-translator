@@ -42,9 +42,9 @@
   tr.total td.name { background:var(--chip); }
   tr.group td { background:var(--accent-soft); font-weight:600; }
   tr.group td.name { background:var(--accent-soft); }
-  .ad { display:grid; grid-template-columns:40px 1fr; gap:10px; align-items:center; }
+  .item { display:grid; grid-template-columns:40px 1fr; gap:10px; align-items:center; }
   .thumb { width:40px; height:40px; border-radius:6px; object-fit:cover; background:var(--chip); }
-  .adname { font-weight:500; overflow-wrap:anywhere; font-size:13px; }
+  .rname { font-weight:500; overflow-wrap:anywhere; font-size:13px; }
   .sub { font-size:12px; color:var(--muted); overflow-wrap:anywhere; }
   .sub a { color:var(--accent); text-decoration:none; } .sub a:hover { text-decoration:underline; }
   .chip { display:inline-block; font-size:11px; font-weight:600; padding:1px 7px; border-radius:99px; background:var(--chip); color:var(--muted); margin-right:6px; vertical-align:1px; }
@@ -151,10 +151,10 @@ function cell(tag, text, cls) { const e = document.createElement(tag); if (cls) 
 function nameCell(r, kind) {
   const td = document.createElement("td"); td.className = "name";
   if (kind === "ad") {
-    const box = document.createElement("div"); box.className = "ad";
+    const box = document.createElement("div"); box.className = "item";
     const img = document.createElement("img"); img.className = "thumb"; img.alt = ""; img.loading = "lazy"; if (r.thumb) img.src = r.thumb;
     const t = document.createElement("div");
-    const n = cell("div", r.name, "adname");
+    const n = cell("div", r.name, "rname");
     const sub = document.createElement("div"); sub.className = "sub";
     sub.append(cell("span", LABEL[r.status] || "Off", "chip " + (r.status || "OFF")), document.createTextNode(r.adset + " · "));
     if (r.preview) { const a = document.createElement("a"); a.href = r.preview; a.target = "_blank"; a.rel = "noopener"; a.textContent = "Preview ↗"; sub.append(a); }
@@ -163,7 +163,7 @@ function nameCell(r, kind) {
     const b = cell("button", r.name, "drill"); b.type = "button"; b.title = kind === "campaign" ? "View its ad sets" : "View its ads";
     b.addEventListener("click", () => { $(kind).value = r.name; setLevel(kind === "campaign" ? "adset" : "ad"); });
     td.append(b); if (r.sub) td.append(cell("div", r.sub, "sub"));
-  } else { td.append(cell("div", r.name, "adname")); if (r.sub) td.append(cell("div", r.sub, "sub")); }
+  } else { td.append(cell("div", r.name, "rname")); if (r.sub) td.append(cell("div", r.sub, "sub")); }
   return td;
 }
 function rowEl(r, kind, cls) {
@@ -201,7 +201,7 @@ function crumbs() {
   c.hidden = !c.children.length;
 }
 function exportCsv() {
-  const rows = [...$("body").querySelectorAll("tr")].map((tr) => [...tr.children].map((td) => td.querySelector(".adname, .drill")?.textContent ?? td.textContent));
+  const rows = [...$("body").querySelectorAll("tr")].map((tr) => [...tr.children].map((td) => td.querySelector(".rname, .drill")?.textContent ?? td.textContent));
   const head = [...$("head").children].map((th) => th.textContent.replace(/ [▲▼]$/, ""));
   const csv = [head, ...rows].map((r) => r.map((v) => `"${String(v).replace(/"/g, '""').trim()}"`).join(",")).join("\n");
   const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
