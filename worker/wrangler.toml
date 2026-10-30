@@ -15,4 +15,10 @@ id = "19ad8dd544ca4272bf8c9b0ed440ab9d"
 
 # Re-read the 100x Ecom SOPs in Notion every 10 minutes (only pages edited since the last run are fetched).
 [triggers]
-crons = ["*/10 * * * *"]
+crons = ["*/10 * * * *", "0 1 * * *"]   # Notion sync; nightly audit summary DM (9 PM ET)
+
+# Audit log of everything that touches the bot (posts, DMs, mentions, commands, sync, bad signatures).
+[[d1_databases]]
+binding = "AUDIT"
+database_name = "bot-audit"
+database_id = "bc7189a9-3851-4978-9fde-a0393fbc0695"

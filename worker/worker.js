@@ -3,14 +3,19 @@
 // "Only visible to you" note for OWNER in the same channel/thread + a DM copy with a link to the original.
 // Text only; voice/video clips are handled by the GitHub Actions job (translate.py, ONLY=audio).
 // Google's free endpoint answers 429 to Cloudflare's IPs, so it isn't used here.
-// Also a help bot: tag @Auvra Reports in a watched channel (or DM it) and it answers from the "100x Ecom SOPs" pages in Notion,
-// which a cron copies into KV every 10 minutes (notion.js).
-// Secrets: SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, TRANSLATE_CHANNELS ({channel_id: name}), OWNER (Slack user ID), NOTION_TOKEN.
+// Also a help bot: tag @Auvra Reports in a watched channel and it answers from the "100x Ecom SOPs" pages in Notion,
+// which a cron copies into KV every 10 minutes (notion.js). Only OWNER may use it in DMs; commands work in the CS chats only.
+// Everything that touches the bot is written to the audit log (audit.js); a nightly cron DMs OWNER the summary.
+// Secrets: SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, TRANSLATE_CHANNELS ({channel_id: name}), OWNER (Slack user ID), NOTION_TOKEN, AUDIT_KEY.
 
 import { syncNotion } from "./notion.js";
+import { audit, askFlag, botActivity, dailySummary, auditApi } from "./audit.js";
 
 const MODEL = "@cf/mistralai/mistral-small-3.1-24b-instruct";
 const BOT_USER = "U0CBNC9MKMK";   // Auvra Reports
+const APP_ID = "A0CBNC780JZ";
+const NOT_HERE = "Hi! I only work inside your CS chat. Please tag @Auvra Reports there with your question. :pray:\n" +
+  "_Oi! Eu só funciono dentro do seu chat de CS. Por favor, me marque lá (@Auvra Reports) com a sua pergunta._";
 const LANG_NAMES = { pt: "Portuguese", es: "Spanish", fr: "French", it: "Italian", de: "German", nl: "Dutch", ar: "Arabic",
   ur: "Urdu", hi: "Hindi", tl: "Tagalog", fil: "Filipino", sr: "Serbian", ru: "Russian", tr: "Turkish", id: "Indonesian",
   "zh-CN": "Chinese", "zh-TW": "Chinese", ja: "Japanese", ko: "Korean", pl: "Polish", ro: "Romanian", uk: "Ukrainian" };
@@ -18,27 +23,40 @@ const names = new Map(); // user ID -> display name, kept for the life of the is
 
 export default {
   async fetch(req, env, ctx) {
+    if (req.method === "GET" && new URL(req.url).pathname === "/audit") return auditApi(req, env);
     if (req.method !== "POST") return new Response("slack-translator is running");
     const raw = await req.text();
-    if (!(await verified(req, raw, env.SLACK_SIGNING_SECRET))) return new Response("bad signature", { status: 401 });
-    if ((req.headers.get("content-type") || "").includes("application/x-www-form-urlencoded")) return command(new URLSearchParams(raw), env);
+    if (!(await verified(req, raw, env.SLACK_SIGNING_SECRET))) {
+      ctx.waitUntil(audit(env, { kind: "bad_signature", text: "unsigned/forged request from " + (req.headers.get("cf-connecting-ip") || "?"), flag: "request not from Slack" }));
+      return new Response("bad signature", { status: 401 });
+    }
+    if ((req.headers.get("content-type") || "").includes("application/x-www-form-urlencoded")) return command(new URLSearchParams(raw), env, ctx);
     const body = JSON.parse(raw);
     if (body.type === "url_verification") return new Response(body.challenge, { headers: { "content-type": "text/plain" } });
     if (req.headers.get("x-slack-retry-num")) return new Response("ok");   // Slack retry of an event we already took
     if (body.type === "event_callback") {
       const log = e => console.log("error", e.stack || String(e));
-      ctx.waitUntil(Promise.all([handle(body.event, env).catch(log), answer(body.event, env).catch(log)]));
+      ctx.waitUntil(Promise.all([handle(body.event, env).catch(log), answer(body.event, env).catch(log), record(body.event, env).catch(log)]));
     }
     return new Response("ok");
   },
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(syncNotion(env).catch(e => console.log("notion sync error", e.stack || String(e))));
+    const log = e => console.log("cron error", e.stack || String(e));
+    if (event.cron === "0 1 * * *") ctx.waitUntil(dailySummary(env, slack).catch(log));
+    else ctx.waitUntil(syncNotion(env).catch(e => { log(e); return audit(env, { kind: "error", text: "Notion sync: " + String(e).slice(0, 300) }); }));
   },
 };
 
 // /cs-onboarding, /video-onboarding, /cs-learning, /video-learning [@person]: post the Notion page titled "... (/<command>)".
-async function command(p, env) {
+// Works in the CS chats only (OWNER: anywhere).
+async function command(p, env, ctx) {
   const json = o => new Response(JSON.stringify(o), { headers: { "content-type": "application/json" } });
+  const channels = JSON.parse(env.TRANSLATE_CHANNELS), ch = p.get("channel_id"), user = p.get("user_id");
+  const allowed = ch in channels || user === env.OWNER;
+  ctx.waitUntil(audit(env, { kind: allowed ? "command" : "blocked", actor_id: user, actor_name: p.get("user_name"), channel_id: ch,
+    channel_name: channels[ch] || p.get("channel_name"), text: `${p.get("command")} ${p.get("text") || ""}`.trim(),
+    flag: allowed ? "" : "command used outside the CS chats" }));
+  if (!allowed) return json({ response_type: "ephemeral", text: NOT_HERE });
   const pack = await env.KB.get("cmd:" + (p.get("command") || "").replace(/^\//, ""));
   if (!pack) return json({ response_type: "ephemeral", text: "That page hasn't synced from Notion yet - try again in 10 minutes." });
   const who = (p.get("text") || "").trim();
@@ -114,6 +132,11 @@ async function answer(ev, env) {
   if (ev.channel_type !== "im" && !raw.includes(`<@${BOT_USER}`)) return;
   const question = (await plain(env, raw.replace(new RegExp(`<@${BOT_USER}(?:\\|[^>]*)?>`, "g"), ""))).trim();
   if (!question) return;
+  const base = { actor_id: ev.user, actor_name: await who(env, ev.user), channel_id: ev.channel, channel_name: ev.channel_type === "im" ? "DM" : channels[ev.channel] };
+  if (ev.channel_type === "im" && ev.user !== env.OWNER) {   // the team uses the bot in their CS chats only
+    await audit(env, { ...base, kind: "blocked", text: question, flag: ["DM'd the bot (not allowed)", askFlag(question)].filter(Boolean).join("; ") });
+    return slack(env, "chat.postMessage", { channel: ev.channel, text: NOT_HERE });
+  }
 
   const thread = ev.channel_type === "im" ? ev.thread_ts : (ev.thread_ts || ev.ts);   // DMs: answer inline
   const sops = await env.KB.get("corpus");
@@ -143,8 +166,27 @@ async function answer(ev, env) {
   });
   const text = ((typeof r.response === "string" && r.response) || r.choices?.[0]?.message?.content || "").trim();
   console.log("answered", ev.channel, ev.ts, "chars", text.length, "usage", JSON.stringify(r.usage || {}));
+  await audit(env, { ...base, kind: "question", text: `Q: ${question}\nA: ${text}`, flag: askFlag(question) });
   if (!text) return;
   await slack(env, "chat.postMessage", { channel: ev.channel, thread_ts: thread, text, unfurl_links: false });
+}
+
+// Security camera: every message the bot posts, edits or deletes - from this Worker, the report job or a blast - and
+// anything posted in a DM with the bot. The bot's private translation DMs to OWNER are skipped (they're OWNER's own feed).
+let ownerDm = null;
+async function record(ev, env) {
+  if (!ev || ev.type !== "message") return;
+  const channels = JSON.parse(env.TRANSLATE_CHANNELS);
+  const a = botActivity(ev, BOT_USER, APP_ID);
+  if (!a) return;
+  if (ev.channel_type === "im") {
+    ownerDm ??= (await slack(env, "conversations.open", { users: env.OWNER })).channel.id;
+    if (ev.channel === ownerDm && a.kind === "bot_post") return;
+    if (!(ev.text || "").startsWith(NOT_HERE.slice(0, 20))) a.flag ||= "bot posted in a DM with someone else";
+  }
+  await audit(env, { ...a, actor_id: BOT_USER, actor_name: "Auvra Reports", channel_id: ev.channel,
+    channel_name: ev.channel_type === "im" ? "DM" : (channels[ev.channel] || ev.channel),
+    flag: a.flag || (ev.channel in channels || ev.channel_type === "im" ? "" : "bot posted outside the CS chats") });
 }
 
 async function handle(ev, env) {
