@@ -36,6 +36,42 @@ function owns(rule, adName, adsetName) {
   return (rule.ad || []).some((p) => up(adName).startsWith(up(p))) || (rule.adset || []).some((p) => up(adsetName).startsWith(up(p)));
 }
 
+// The Ads Manager metrics this page shows, from one insights row (an ad, or an ad in one breakdown slice).
+function metrics(r) {
+  return {
+    spend: Number(r.spend || 0), impressions: Number(r.impressions || 0), reach: Number(r.reach || 0),
+    link_clicks: Number(r.inline_link_clicks || 0),
+    purchases: act(r.actions, "omni_purchase", "purchase", "offsite_conversion.fb_pixel_purchase"),
+    revenue: act(r.action_values, "omni_purchase", "purchase", "offsite_conversion.fb_pixel_purchase"),
+    atc: act(r.actions, "omni_add_to_cart", "add_to_cart", "offsite_conversion.fb_pixel_add_to_cart"),
+    checkouts: act(r.actions, "omni_initiated_checkout", "initiate_checkout", "offsite_conversion.fb_pixel_initiate_checkout"),
+    lpv: act(r.actions, "landing_page_view", "omni_landing_page_view"),
+    video3s: act(r.actions, "video_view"),
+    thruplay: act(r.video_thruplay_watched_actions, "video_view"),
+  };
+}
+
+// Budgets shown read-only beside campaign and ad set names (CBO budget, ad set minimum/daily budget).
+async function budgets(env) {
+  const live = JSON.stringify([{ field: "effective_status", operator: "IN", value: ["ACTIVE", "PAUSED", "IN_PROCESS", "WITH_ISSUES"] }]);
+  const camps = await pages(env, `${env.META_ACCOUNT}/campaigns`, { fields: "name,daily_budget,lifetime_budget,effective_status", limit: "200", filtering: live }, 2);
+  const sets = await pages(env, `${env.META_ACCOUNT}/adsets`, { fields: "name,daily_budget,daily_min_spend_target,daily_spend_cap,effective_status", limit: "500", filtering: live }, 2);
+  const money = (v) => (v ? Number(v) / 100 : null);
+  return {
+    campaigns: Object.fromEntries(camps.map((c) => [c.name, { daily: money(c.daily_budget), lifetime: money(c.lifetime_budget), status: c.effective_status }])),
+    adsets: Object.fromEntries(sets.map((a) => [a.name, { daily: money(a.daily_budget), min: money(a.daily_min_spend_target), cap: money(a.daily_spend_cap), status: a.effective_status }])),
+  };
+}
+
+// A breakdown (age, gender, platform, placement, device) for every ad, as small rows keyed by ad id.
+const BREAKDOWNS = { age: "age", gender: "gender", platform: "publisher_platform", placement: "publisher_platform,platform_position", device: "impression_device" };
+async function breakdown(env, by, range) {
+  const time = range.preset ? { date_preset: range.preset } : { time_range: JSON.stringify({ since: range.since, until: range.until }) };
+  const rows = await pages(env, `${env.META_ACCOUNT}/insights`, { level: "ad", breakdowns: BREAKDOWNS[by], limit: "500", ...time,
+    fields: "ad_id,spend,impressions,reach,inline_link_clicks,actions,action_values,video_thruplay_watched_actions" }, 8);
+  return rows.map((r) => ({ ad: r.ad_id, key: BREAKDOWNS[by].split(",").map((f) => r[f]).filter(Boolean).join(" · ") || "Unknown", ...metrics(r) }));
+}
+
 async function load(env, rule, range) {
   const time = range.preset ? { date_preset: range.preset } : { time_range: JSON.stringify({ since: range.since, until: range.until }) };
   const filters = rule ? [...(rule.ad || []).map((p) => ["ad.name", p]), ...(rule.adset || []).map((p) => ["adset.name", p])] : [[null]];
@@ -56,17 +92,7 @@ async function load(env, rule, range) {
   for (const r of ins) {
     if (!owns(rule, r.ad_name, r.adset_name)) continue;
     const row = byId.get(r.ad_id) || { id: r.ad_id, name: r.ad_name, adset: r.adset_name, campaign: r.campaign_name, status: "OFF", thumb: "", preview: "" };
-    Object.assign(row, {
-      spend: Number(r.spend || 0), impressions: Number(r.impressions || 0), reach: Number(r.reach || 0), frequency: Number(r.frequency || 0),
-      link_clicks: Number(r.inline_link_clicks || 0),
-      purchases: act(r.actions, "omni_purchase", "purchase", "offsite_conversion.fb_pixel_purchase"),
-      revenue: act(r.action_values, "omni_purchase", "purchase", "offsite_conversion.fb_pixel_purchase"),
-      atc: act(r.actions, "omni_add_to_cart", "add_to_cart", "offsite_conversion.fb_pixel_add_to_cart"),
-      checkouts: act(r.actions, "omni_initiated_checkout", "initiate_checkout", "offsite_conversion.fb_pixel_initiate_checkout"),
-      lpv: act(r.actions, "landing_page_view", "omni_landing_page_view"),
-      video3s: act(r.actions, "video_view"),
-      thruplay: act(r.video_thruplay_watched_actions, "video_view"),
-    });
+    Object.assign(row, metrics(r));
     byId.set(r.ad_id, row);
   }
   return [...byId.values()];
@@ -91,12 +117,14 @@ export async function mirror(req, env, ctx) {
   }
   const preset = url.searchParams.get("preset"), since = url.searchParams.get("since"), until = url.searchParams.get("until");
   const range = PRESETS.has(preset) ? { preset } : (/^\d{4}-\d{2}-\d{2}$/.test(since || "") && /^\d{4}-\d{2}-\d{2}$/.test(until || "")) ? { since, until } : { preset: "last_7d" };
-  const key = new Request(`https://mirror.cache/all/${range.preset || range.since + "_" + range.until}`);
+  const by = BREAKDOWNS[url.searchParams.get("breakdown")] ? url.searchParams.get("breakdown") : null;
+  const key = new Request(`https://mirror.cache/all/${range.preset || range.since + "_" + range.until}/${by || "main"}`);
   const hit = await caches.default.match(key);
   if (hit) return hit;
   try {
-    const rows = await load(env, null, range);
-    const res = Response.json({ range, fetched: new Date().toISOString(), strategists: (await env.KB.get("mirror_cs", "json")) || {}, rows },
+    const body = by ? { range, by, fetched: new Date().toISOString(), rows: await breakdown(env, by, range) }
+      : { range, fetched: new Date().toISOString(), strategists: (await env.KB.get("mirror_cs", "json")) || {}, budgets: await budgets(env), rows: await load(env, null, range) };
+    const res = Response.json(body,
       { headers: { "cache-control": "max-age=120" } });
     ctx.waitUntil(caches.default.put(key, res.clone()));
     return res;

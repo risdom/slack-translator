@@ -52,6 +52,12 @@
   .chip.DISAPPROVED, .chip.WITH_ISSUES { color:var(--bad); background:color-mix(in srgb, var(--bad) 14%, transparent); }
   .chip.IN_PROCESS, .chip.PENDING_REVIEW, .chip.PREAPPROVED { color:var(--warn); background:color-mix(in srgb, var(--warn) 16%, transparent); }
   .note { color:var(--muted); font-size:12px; margin:0; }
+  .crumbs { display:flex; flex-wrap:wrap; gap:6px; align-items:center; font-size:13px; }
+  .crumb { border:1px solid var(--accent); color:var(--accent); background:var(--accent-soft); border-radius:99px; padding:3px 10px; cursor:pointer; font-weight:500; }
+  .drill { all:unset; cursor:pointer; color:var(--accent); font-weight:600; overflow-wrap:anywhere; }
+  .drill:hover { text-decoration:underline; }
+  tr.slice td { color:var(--muted); font-size:12.5px; }
+  tr.slice td.name { padding-left:58px; }
   .msg { padding:24px; text-align:center; color:var(--muted); }
   .err { color:var(--bad); }
   :focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
@@ -75,8 +81,14 @@
     <label>Ad set<select id="adset"><option value="">All ad sets</option></select></label>
     <label>Delivery<select id="status"><option value="">All</option><option value="ACTIVE">Active</option><option value="REVIEW">In review</option><option value="REJECTED">Rejected / issues</option><option value="OFF">Off</option></select></label>
     <input type="search" id="q" placeholder="Search by name…" aria-label="Search by name">
-    <div class="cols"><button class="btn" id="colsBtn" type="button" aria-expanded="false">Columns</button><div class="colmenu" id="colmenu" hidden></div></div>
+    <label>Columns<select id="preset-cols"><option value="performance">Performance</option><option value="delivery">Delivery</option><option value="engagement">Engagement</option>
+      <option value="video">Video engagement</option><option value="conversions">Conversions</option><option value="custom">Custom</option></select></label>
+    <label>Breakdown<select id="breakdown"><option value="">None</option><option value="age">Age</option><option value="gender">Gender</option>
+      <option value="platform">Platform</option><option value="placement">Placement</option><option value="device">Impression device</option></select></label>
+    <div class="cols"><button class="btn" id="colsBtn" type="button" aria-expanded="false">Customize columns</button><div class="colmenu" id="colmenu" hidden></div></div>
+    <button class="btn" id="export" type="button">Export CSV</button>
   </div>
+  <div class="crumbs" id="crumbs" hidden></div>
 
   <div class="tabs" role="tablist">
     <button role="tab" data-level="ad" aria-selected="true">Ads</button>
@@ -94,10 +106,19 @@ const COLS = [
   ["spend","Amount spent","$"],["impressions","Impressions","n"],["reach","Reach","n"],["frequency","Frequency","f"],["cpm","CPM","$"],
   ["link_clicks","Link clicks","n"],["ctr","CTR (link)","%"],["cpc","CPC (link)","$"],["lpv","Landing page views","n"],["atc","Adds to cart","n"],
   ["cost_atc","Cost per add to cart","$"],["checkouts","Checkouts initiated","n"],["purchases","Purchases","n"],["cpa","Cost per purchase","$"],
-  ["revenue","Purchase value","$"],["roas","ROAS","x"],["hook","Hook rate","%"],["hold","Hold rate","%"]];
-const DEFAULT = ["spend","impressions","cpm","ctr","cpc","atc","purchases","cpa","roas","hook","hold"];
-let shown; try { shown = JSON.parse(localStorage.getItem("mirror-cols")) || DEFAULT; } catch { shown = DEFAULT; }
-let data = null, level = "ad", sort = { key: "spend", dir: -1 }, timer = null;
+  ["revenue","Purchase value","$"],["roas","ROAS","x"],["video3s","3-second video plays","n"],["thruplay","ThruPlays","n"],
+  ["hook","Hook rate","%"],["hold","Hold rate","%"]];
+// Ads Manager's column presets.
+const PRESET_COLS = {
+  performance: ["spend","impressions","cpm","ctr","cpc","atc","purchases","cpa","roas","hook","hold"],
+  delivery: ["spend","reach","impressions","frequency","cpm"],
+  engagement: ["spend","impressions","link_clicks","ctr","cpc","lpv"],
+  video: ["spend","impressions","video3s","thruplay","hook","hold","cpm"],
+  conversions: ["spend","lpv","atc","cost_atc","checkouts","purchases","cpa","revenue","roas"] };
+const DEFAULT = PRESET_COLS.performance;
+let shown, preset = "performance";
+try { preset = localStorage.getItem("mirror-preset") || "performance"; shown = preset === "custom" ? JSON.parse(localStorage.getItem("mirror-cols")) || DEFAULT : PRESET_COLS[preset]; } catch { shown = DEFAULT; }
+let data = null, level = "ad", sort = { key: "spend", dir: -1 }, timer = null, bd = null;
 const fmt = { "$": (v) => v == null ? "—" : "$" + v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
   n: (v) => v == null ? "—" : Math.round(v).toLocaleString("en-US"), f: (v) => v == null ? "—" : v.toFixed(2),
   "%": (v) => v == null ? "—" : (v * 100).toFixed(2) + "%", x: (v) => v == null ? "—" : v.toFixed(2) };
@@ -138,6 +159,10 @@ function nameCell(r, kind) {
     sub.append(cell("span", LABEL[r.status] || "Off", "chip " + (r.status || "OFF")), document.createTextNode(r.adset + " · "));
     if (r.preview) { const a = document.createElement("a"); a.href = r.preview; a.target = "_blank"; a.rel = "noopener"; a.textContent = "Preview ↗"; sub.append(a); }
     t.append(n, sub); box.append(img, t); td.append(box);
+  } else if (kind === "campaign" || kind === "adset") {   // click to drill down, like Ads Manager
+    const b = cell("button", r.name, "drill"); b.type = "button"; b.title = kind === "campaign" ? "View its ad sets" : "View its ads";
+    b.addEventListener("click", () => { $(kind).value = r.name; setLevel(kind === "campaign" ? "adset" : "ad"); });
+    td.append(b); if (r.sub) td.append(cell("div", r.sub, "sub"));
   } else { td.append(cell("div", r.name, "adname")); if (r.sub) td.append(cell("div", r.sub, "sub")); }
   return td;
 }
@@ -147,10 +172,40 @@ function rowEl(r, kind, cls) {
   for (const [k, , f] of COLS) if (shown.includes(k)) tr.append(cell("td", fmt[f](r[k])));
   return tr;
 }
+// Breakdown rows under a row: the selected breakdown's slices, summed over the row's ads.
+function slices(ids) {
+  if (!bd) return [];
+  const set = new Set(ids), m = new Map();
+  for (const s of bd.rows) if (set.has(s.ad)) { if (!m.has(s.key)) m.set(s.key, []); m.get(s.key).push(s); }
+  return [...m].map(([k, rs]) => sum(rs, { name: k })).sort(bySort);
+}
+function append(body, r, kind, cls) {
+  body.append(rowEl(r, kind, cls));
+  if (bd && kind !== "slice") for (const s of slices(r._ids || [r.id])) body.append(rowEl(s, "slice", "slice"));
+}
+const money = (v) => v == null ? "" : "$" + v.toLocaleString("en-US", { maximumFractionDigits: 0 });
 function group(rows, key, sub) {
   const m = new Map();
   for (const r of rows) { const k = key(r); if (!m.has(k)) m.set(k, []); m.get(k).push(r); }
-  return [...m].map(([k, rs]) => sum(rs, { name: k, sub: sub ? sub(rs) : "" }));
+  return [...m].map(([k, rs]) => ({ ...sum(rs, { name: k, sub: sub ? sub(rs, k) : "" }), _ids: rs.map((x) => x.id) }));
+}
+function setLevel(l) {
+  level = l; document.querySelectorAll(".tabs button").forEach((x) => x.setAttribute("aria-selected", String(x.dataset.level === l))); render();
+}
+function crumbs() {
+  const c = $("crumbs"); c.replaceChildren();
+  for (const id of ["campaign", "adset"]) if ($(id).value) {
+    const b = cell("button", (id === "campaign" ? "Campaign: " : "Ad set: ") + $(id).value + "  ×", "crumb"); b.type = "button";
+    b.addEventListener("click", () => { $(id).value = ""; if (id === "campaign") $("adset").value = ""; render(); }); c.append(b);
+  }
+  c.hidden = !c.children.length;
+}
+function exportCsv() {
+  const rows = [...$("body").querySelectorAll("tr")].map((tr) => [...tr.children].map((td) => td.querySelector(".adname, .drill")?.textContent ?? td.textContent));
+  const head = [...$("head").children].map((th) => th.textContent.replace(/ [▲▼]$/, ""));
+  const csv = [head, ...rows].map((r) => r.map((v) => `"${String(v).replace(/"/g, '""').trim()}"`).join(",")).join("\n");
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = `auvra-ads-${level}-${$("preset").value}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 const bySort = (a, b) => { const x = sort.key === "name" ? a.name : a[sort.key], y = sort.key === "name" ? b.name : b[sort.key];
   if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1; return (x > y ? 1 : x < y ? -1 : 0) * sort.dir; };
@@ -161,14 +216,20 @@ function render() {
   for (const [k, l] of hs) { const th = cell("th", l, k === "name" ? "name" : ""); th.dataset.key = k;
     th.setAttribute("aria-sort", sort.key === k ? (sort.dir > 0 ? "ascending" : "descending") : "none"); head.append(th); }
   const body = $("body"); body.replaceChildren();
+  crumbs();
   if (!data) return;
   const rows = filtered().map(derive);
   if (!rows.length) { const tr = document.createElement("tr"); const td = cell("td", "No ads match these filters.", "msg"); td.colSpan = hs.length; tr.append(td); body.append(tr); return; }
   const total = sum(rows, { name: `Results from ${rows.length} ads` });
-  body.append(rowEl(total, "total", "total"));
-  if (level === "ad") rows.sort(bySort).forEach((r) => body.append(rowEl(r, "ad")));
-  if (level === "adset") group(rows, (r) => r.adset, (rs) => `${rs[0].campaign} · ${rs.length} ads`).sort(bySort).forEach((r) => body.append(rowEl(r, "x")));
-  if (level === "campaign") group(rows, (r) => r.campaign, (rs) => `${new Set(rs.map((x) => x.adset)).size} ad sets · ${rs.length} ads`).sort(bySort).forEach((r) => body.append(rowEl(r, "x")));
+  append(body, { ...total, _ids: rows.map((r) => r.id) }, "total", "total");
+  const B = data.budgets || { campaigns: {}, adsets: {} };
+  if (level === "ad") rows.sort(bySort).forEach((r) => append(body, r, "ad"));
+  if (level === "adset") group(rows, (r) => r.adset, (rs, k) => { const b = B.adsets[k] || {};
+      return [rs[0].campaign, b.daily ? `Budget ${money(b.daily)}/day` : "", b.min ? `Min spend ${money(b.min)}/day` : "", `${rs.length} ads`].filter(Boolean).join(" · "); })
+    .sort(bySort).forEach((r) => append(body, r, "adset"));
+  if (level === "campaign") group(rows, (r) => r.campaign, (rs, k) => { const b = B.campaigns[k] || {};
+      return [b.daily ? `Budget ${money(b.daily)}/day` : b.lifetime ? `Lifetime budget ${money(b.lifetime)}` : "", `${new Set(rs.map((x) => x.adset)).size} ad sets · ${rs.length} ads`].filter(Boolean).join(" · "); })
+    .sort(bySort).forEach((r) => append(body, r, "campaign"));
   if (level === "hook") {
     const batch = (r) => r.name.replace(/H\d+(?:-H\d+)*(?=_)/, "").replace(/#/g, "");
     const hooked = rows.filter((r) => /BATCH\d*#?H\d+|_B\d+H\d+/i.test(r.name));   // only ads named with the CS_BATCH#H# convention
@@ -185,7 +246,8 @@ function render() {
 function colMenu() {
   const m = $("colmenu"); m.replaceChildren();
   for (const [k, l] of COLS) { const lab = document.createElement("label"); const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = shown.includes(k); cb.id = "col-" + k;
-    cb.addEventListener("change", () => { shown = COLS.map(([x]) => x).filter((x) => x === k ? cb.checked : shown.includes(x)); try { localStorage.setItem("mirror-cols", JSON.stringify(shown)); } catch {} render(); });
+    cb.addEventListener("change", () => { shown = COLS.map(([x]) => x).filter((x) => x === k ? cb.checked : shown.includes(x)); preset = "custom"; $("preset-cols").value = "custom";
+      try { localStorage.setItem("mirror-cols", JSON.stringify(shown)); localStorage.setItem("mirror-preset", "custom"); } catch {} render(); });
     lab.append(cb, document.createTextNode(l)); m.append(lab); }
 }
 async function load(force) {
@@ -198,8 +260,16 @@ async function load(force) {
     data = j; for (const row of data.rows) row._cs = ownerOf(row);
     fillSelect("cs", [...Object.keys(data.strategists || {}), "Other"]); fillSelect("campaign", data.rows.map((r) => r.campaign)); fillSelect("adset", data.rows.map((r) => r.adset));
     $("dot").className = "dot"; $("updated").textContent = "Live · updated " + new Date(j.fetched).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    await loadBreakdown(qs);
     render();
   } catch (e) { $("dot").className = "dot err"; $("updated").textContent = String(e.message || e); }
+}
+async function loadBreakdown(qs) {
+  const by = $("breakdown").value; if (!by) { bd = null; return; }
+  qs = qs || new URLSearchParams($("preset").value === "custom" ? { since: $("since").value, until: $("until").value } : { preset: $("preset").value });
+  const j = await (await fetch(location.pathname.replace(/\/$/, "") + "/data?" + qs + "&breakdown=" + by, { cache: "no-store" })).json();
+  if (j.error) throw new Error(j.error);
+  bd = j;
 }
 $("head").addEventListener("click", (e) => { const th = e.target.closest("th"); if (!th) return; const k = th.dataset.key;
   sort = { key: k, dir: sort.key === k ? -sort.dir : (k === "name" ? 1 : -1) }; render(); });
@@ -210,6 +280,13 @@ for (const id of ["since", "until"]) $(id).addEventListener("change", () => load
 for (const id of ["cs", "campaign", "adset", "status"]) $(id).addEventListener("change", render);
 $("q").addEventListener("input", render);
 $("refresh").addEventListener("click", () => load(true));
+$("preset-cols").value = preset;
+$("preset-cols").addEventListener("change", () => { preset = $("preset-cols").value;
+  if (preset !== "custom") shown = PRESET_COLS[preset];
+  try { localStorage.setItem("mirror-preset", preset); } catch {} colMenu(); render(); });
+$("breakdown").addEventListener("change", async () => { $("updated").textContent = "Loading breakdown…";
+  try { await loadBreakdown(); $("updated").textContent = "Live · breakdown loaded"; } catch (e) { $("updated").textContent = String(e.message || e); } render(); });
+$("export").addEventListener("click", exportCsv);
 $("colsBtn").addEventListener("click", () => { const m = $("colmenu"); m.hidden = !m.hidden; $("colsBtn").setAttribute("aria-expanded", String(!m.hidden)); });
 document.addEventListener("click", (e) => { if (!e.target.closest(".cols")) $("colmenu").hidden = true; });
 colMenu(); render(); load();
