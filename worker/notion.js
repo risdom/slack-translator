@@ -35,10 +35,10 @@ export async function syncNotion(env) {
     try { await blocks(notion, p.id, 0, lines, () => calls < BUDGET + 8, slack); }
     catch (e) { console.log("page failed", p.id, String(e)); pending++; continue; }
     await env.KB.put("page:" + p.id, JSON.stringify({ title: pageTitle(p), text: redact(lines.join("\n")) }));
-    // The onboarding pages are posted as-is by /cs-onboarding and /video-onboarding (Slack formatting, not redacted:
-    // whatever Rayston writes on those pages is what new hires get). The intro line above the first heading is skipped.
-    const cmd = (pageTitle(p).match(/\/(cs|video)-onboarding/) || [])[1];
-    if (cmd) await env.KB.put("onboard:" + cmd, slack.slice(Math.max(0, slack.findIndex(l => l.startsWith("*")))).join("\n"));
+    // A page titled "... (/some-command)" is what that Slack slash command posts, as-is (Slack formatting, not redacted:
+    // whatever Rayston writes on those pages is what people get). The intro line above the first heading is skipped.
+    const cmd = (pageTitle(p).match(/\(\/([a-z0-9-]+)\)/) || [])[1];
+    if (cmd) await env.KB.put("cmd:" + cmd, slack.slice(Math.max(0, slack.findIndex(l => l.startsWith("*")))).join("\n"));
     meta[p.id] = p.last_edited_time;
     changed = true;
   }

@@ -36,13 +36,11 @@ export default {
   },
 };
 
-// /cs-onboarding [@person] and /video-onboarding [@person]: post the matching Notion onboarding page in the channel.
+// /cs-onboarding, /video-onboarding, /cs-learning, /video-learning [@person]: post the Notion page titled "... (/<command>)".
 async function command(p, env) {
-  const kind = { "/cs-onboarding": "cs", "/video-onboarding": "video" }[p.get("command")];
   const json = o => new Response(JSON.stringify(o), { headers: { "content-type": "application/json" } });
-  if (!kind) return json({ response_type: "ephemeral", text: "Unknown command." });
-  const pack = await env.KB.get("onboard:" + kind);
-  if (!pack) return json({ response_type: "ephemeral", text: "The onboarding page hasn't synced from Notion yet - try again in 10 minutes." });
+  const pack = await env.KB.get("cmd:" + (p.get("command") || "").replace(/^\//, ""));
+  if (!pack) return json({ response_type: "ephemeral", text: "That page hasn't synced from Notion yet - try again in 10 minutes." });
   const who = (p.get("text") || "").trim();
   return json({ response_type: "in_channel", unfurl_links: false, text: (who ? `:wave: Welcome ${who}! / Bem-vindo(a) ${who}!\n\n` : "") + pack });
 }
