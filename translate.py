@@ -25,7 +25,7 @@ state=json.load(open(STATE)) if os.path.exists(STATE) else {}
 print("state file:",os.path.exists(STATE),"| backfill min:",BACKFILL,"| now",time.strftime("%m-%d %H:%M",time.gmtime()))
 now=time.time(); todo=[]
 for ch in CHANNELS:
-    oldest=state.get(ch) or str(now-BACKFILL*60)
+    oldest=state.get(ch) or f"{now-BACKFILL*60:.6f}"   # 6 decimals: Slack misreads longer floats as a far-future ts
     try: resp=slack("conversations.history",channel=ch,oldest=oldest,limit=200); msgs=resp["messages"]
     except RuntimeError as e: print("skip",ch,e); continue
     print(f"  {ch}: since {time.strftime('%m-%d %H:%M',time.gmtime(float(oldest)))}Z got={len(msgs)} from_state={ch in state} echo_oldest={resp.get('oldest')} more={resp.get('has_more')} meta={resp.get('response_metadata')} warn={resp.get('warning')}", flush=True)
