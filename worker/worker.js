@@ -11,12 +11,14 @@
 import { syncNotion } from "./notion.js";
 import { audit, askFlag, botActivity, dailySummary, auditApi, keyGuard } from "./audit.js";
 import { adWatch, appealApi } from "./adwatch.js";
-import { syncAccess } from "./access.js";
+import { addToReport } from "./access.js";
+import { queueWatch } from "./queue.js";
 import { mirror, mirrorAdmin } from "./mirror.js";
 
 const MODEL = "@cf/mistralai/mistral-small-3.1-24b-instruct";
 const BOT_USER = "U0CBNC9MKMK";   // Auvra Reports
 const APP_ID = "A0CBNC780JZ";
+const OWNER_ONLY = new Set(["/cs-addtoreport", "/admin-tools"]);   // answered only for OWNER, anywhere
 const NOT_HERE = "Hi! I only work inside your CS chat. Please tag @Auvra Reports there with your question. :pray:\n" +
   "_Oi! Eu só funciono dentro do seu chat de CS. Por favor, me marque lá (@Auvra Reports) com a sua pergunta._";
 const LANG_NAMES = { pt: "Portuguese", es: "Spanish", fr: "French", it: "Italian", de: "German", nl: "Dutch", ar: "Arabic",
@@ -54,7 +56,7 @@ export default {
     else ctx.waitUntil(Promise.all([
       syncNotion(env).catch(e => { log(e); return audit(env, { kind: "error", text: "Notion sync: " + String(e).slice(0, 300) }); }),
       adWatch(env, slack).catch(e => { log(e); return audit(env, { kind: "error", text: "Rejected-ads watchdog: " + String(e).slice(0, 300), flag: "watchdog crashed" }); }),
-      syncAccess(env).catch(e => { log(e); return audit(env, { kind: "error", text: "Ads mirror auto access: " + String(e).slice(0, 300) }); }),
+      queueWatch(env, slack).catch(e => { log(e); return audit(env, { kind: "error", text: "Launch-queue watcher: " + String(e).slice(0, 300) }); }),
     ]));
   },
 };
@@ -69,6 +71,24 @@ async function command(p, env, ctx) {
     channel_name: channels[ch] || p.get("channel_name"), text: `${p.get("command")} ${p.get("text") || ""}`.trim(),
     flag: allowed ? "" : "command used outside the CS chats" }));
   if (!allowed) return json({ response_type: "ephemeral", text: NOT_HERE });
+  if (OWNER_ONLY.has(p.get("command")) && user !== env.OWNER) {
+    ctx.waitUntil(audit(env, { kind: "blocked", actor_id: user, actor_name: p.get("user_name"), channel_id: ch, text: "tried " + p.get("command"), flag: "someone other than the owner tried an owner-only command" }));
+    return json({ response_type: "ephemeral", text: "Only Rayston can use this command." });
+  }
+  if (p.get("command") === "/admin-tools") {   // OWNER's list of every tool, from KV "admin_tools" (kept out of this public repo); mirror links filled in live
+    const links = (await env.KB.get("mirror_links", "json")) || {};
+    const mirror = Object.entries(links).find(([, l]) => l.admin)?.[0];
+    const text = ((await env.KB.get("admin_tools")) || "No tools list saved yet.")
+      .replace("{MIRROR}", "https://slack-translator.auvra-tools.workers.dev/ads/" + mirror)
+      .replace("{ACCESS}", "https://slack-translator.auvra-tools.workers.dev/ads-admin/" + (await env.KB.get("mirror_admin")));
+    return json({ response_type: "ephemeral", unfurl_links: false, text });
+  }
+  if (p.get("command") === "/cs-addtoreport") {   // OWNER approves Ads mirror access (access.js); answers via response_url to beat Slack's 3 s limit
+    if (!(p.get("text") || "").trim()) return json({ response_type: "ephemeral", text: await addToReport(env, "") });
+    ctx.waitUntil(addToReport(env, p.get("text") || "").catch(e => ":warning: Couldn't finish: " + e.message)
+      .then(text => fetch(p.get("response_url"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ response_type: "ephemeral", text }) })));
+    return json({ response_type: "ephemeral", text: "Sending Ads Mirror access…" });
+  }
   const pack = await env.KB.get("cmd:" + (p.get("command") || "").replace(/^\//, ""));
   if (!pack) return json({ response_type: "ephemeral", text: "That page hasn't synced from Notion yet - try again in 10 minutes." });
   const who = (p.get("text") || "").trim();

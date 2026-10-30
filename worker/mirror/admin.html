@@ -25,21 +25,11 @@
   td.act { white-space:nowrap; text-align:right; }
   .empty { color:var(--muted); padding:12px 6px; }
   :focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
-  .row { display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
-  h2 { margin:0; font-size:16px; }
-  .pill { font-size:12px; font-weight:600; border-radius:99px; padding:2px 10px; border:1px solid var(--line); }
-  .pill.on { color:var(--ok); border-color:var(--ok); } .pill.off { color:var(--muted); }
-  .names { margin:0; padding-left:18px; } .names li { margin:2px 0; }
   .tag { font-size:12px; color:var(--muted); }
 </style></head>
 <body><main>
   <h1>Ads Mirror access</h1>
-  <p>Invite someone to get their own link to the live Ads Mirror (all ads, read-only). Remove access and their link stops working immediately. Every invite, removal and visit is in your bot audit log.</p>
-  <section class="card" id="auto">
-    <div class="row"><h2>Automatic access <span class="pill off" id="autoState">Off</span></h2><button type="button" id="autoBtn" hidden>Turn on</button></div>
-    <p id="autoWhy">Everyone with the strategist role in Creative HQ gets their own link by Slack DM (English + Portuguese). When they lose the role, leave Creative HQ, or their Slack account is deactivated, their link stops working. Checked every 10 minutes.</p>
-    <div id="autoPlan"></div>
-  </section>
+  <p>Approve someone from Slack with <b>/cs-addtoreport @person</b> (only you can run it): they get their own link to the live Ads Mirror (all ads, read-only) by DM. Or invite by name here and send the link yourself. Remove access and their link stops working immediately. Every invite, removal and visit is in your bot audit log.</p>
   <section class="card">
     <form id="f"><input id="name" placeholder="Name, e.g. Pedro Alvite" aria-label="Name" autocomplete="off"><button class="primary" type="submit">Invite</button></form>
     <div class="new" id="new" hidden><b id="newWho"></b><code id="newLink"></code><div><button type="button" id="copyNew">Copy link</button></div></div>
@@ -58,7 +48,7 @@ async function list() {
   for (const r of rows) {
     const tr = document.createElement("tr");
     const n = document.createElement("td"); n.textContent = r.name;
-    if (r.auto) { n.append(document.createElement("br"), Object.assign(document.createElement("span"), { className: "tag", textContent: "Automatic · " + r.role })); }
+    if (r.slack) n.append(document.createElement("br"), Object.assign(document.createElement("span"), { className: "tag", textContent: "Approved in Slack · link sent by DM" }));
     const d = document.createElement("td"); d.textContent = new Date(r.invited).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
     const l = document.createElement("td"); const c = document.createElement("code"); c.textContent = r.link; l.append(c);
     const a = document.createElement("td"); a.className = "act";
@@ -80,32 +70,5 @@ document.getElementById("f").addEventListener("submit", async (e) => {
   document.getElementById("name").value = ""; list();
 });
 function alertBox(t) { const n = document.getElementById("new"); n.hidden = false; document.getElementById("newWho").textContent = t; document.getElementById("newLink").textContent = ""; }
-// Automatic access panel
-const el = (tag, text, cls) => Object.assign(document.createElement(tag), { textContent: text, className: cls || "" });
-function names(title, list) { const box = document.createElement("div"); box.append(el("b", title)); const ul = el("ul", "", "names"); for (const x of list) ul.append(el("li", x)); box.append(ul); return box; }
-async function auto(post) {
-  const a = post ? await (await fetch(base + "/auto", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(post) })).json()
-                 : await (await fetch(base + "/auto", { cache: "no-store" })).json();
-  if (post) { list(); await auto(); if (a.error) document.getElementById("autoPlan").prepend(el("p", "Couldn't finish: " + a.error)); return; }
-  const st = document.getElementById("autoState"), btn = document.getElementById("autoBtn"), plan = document.getElementById("autoPlan");
-  st.textContent = a.on ? "On" : "Off"; st.className = "pill " + (a.on ? "on" : "off");
-  plan.replaceChildren();
-  if (!a.ready) { plan.append(el("p", "Waiting for setup: the Creative HQ connection hasn't been added yet.")); btn.hidden = true; return; }
-  btn.hidden = false; btn.textContent = a.on ? "Turn off" : "Turn on"; btn.className = a.on ? "" : "primary";
-  btn.onclick = () => { btn.disabled = true; btn.textContent = a.on ? "Turning off…" : "Sending links…"; auto({ on: !a.on }).finally(() => { btn.disabled = false; }); };
-  const p = a.plan;
-  if (!p) { plan.append(el("p", "First check runs within 10 minutes.")); return; }
-  if (p.add.length) plan.append(names(a.on ? "Getting a link on the next check:" : "Will get a link by Slack DM when you turn this on:", p.add.map((x) => x.name)));
-  if (p.sent && p.sent.length) plan.append(names("Just sent a link to:", p.sent));
-  if (p.remove.length) plan.append(names(a.on ? "Removed:" : "Would lose access:", p.remove));
-  if (p.noSlack.length) plan.append(names("Strategists not found in Slack yet (they'll get a link once they're in Slack):", p.noSlack));
-  if (!p.add.length && !(p.sent || []).length && !p.remove.length) plan.append(el("p", "Everyone with the role already has access."));
-  if (a.blocked.length) {
-    const box = names("You removed these people, so they won't get a new link automatically:", []);
-    for (const e of a.blocked) { const li = el("li", e + " "); const b = el("button", "Allow again"); b.type = "button"; b.onclick = () => fetch(base + "/allow", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: e }) }).then(() => auto()); li.append(b); box.querySelector("ul").append(li); }
-    plan.append(box);
-  }
-  plan.append(el("p", "Last checked " + new Date(p.at).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }), "tag"));
-}
-list(); auto();
+list();
 </script></body></html>

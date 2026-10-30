@@ -7,7 +7,7 @@
 // Invites, revokes and every page open go to the audit log.
 import { audit } from "./audit.js";
 import { PAGE, ADMIN_PAGE } from "./mirror_page.js";
-import { newToken, syncAccess } from "./access.js";
+import { newToken } from "./access.js";
 
 const GRAPH = "https://graph.facebook.com/v23.0/";
 const PRESETS = new Set(["today", "yesterday", "last_3d", "last_7d", "last_14d", "last_30d", "this_month", "last_month", "maximum"]);
@@ -187,29 +187,8 @@ export async function mirrorAdmin(req, env, ctx) {
     if (!gone) return json({ error: "Already removed." }, 404);
     delete links[t];
     await env.KB.put("mirror_links", JSON.stringify(links));
-    if (gone.auto) {   // keep them out: auto access won't send them a new link
-      const blocked = new Set((await env.KB.get("mirror_blocked", "json")) || []); blocked.add(gone.email);
-      await env.KB.put("mirror_blocked", JSON.stringify([...blocked]));
-    }
     await audit(env, { kind: "mirror_revoke", actor_name: "Rayston", text: `removed ${gone.name}'s access to the Ads mirror` });
     return json({ removed: gone.name });
-  }
-  // Auto access from Creative HQ roles (access.js): see the plan, switch it on or off, let a removed person back in.
-  if (req.method === "GET" && action === "auto")
-    return json({ ready: !!env.CHQ_KEY, on: (await env.KB.get("mirror_auto")) === "on", plan: await env.KB.get("mirror_auto_plan", "json"),
-      blocked: (await env.KB.get("mirror_blocked", "json")) || [] });
-  if (req.method === "POST" && action === "auto") {
-    const { on } = await req.json();
-    await env.KB.put("mirror_auto", on ? "on" : "off");
-    await audit(env, { kind: "mirror_invite", actor_name: "Rayston", text: `turned automatic Ads mirror access ${on ? "on" : "off"}` });
-    try { return json({ on: !!on, plan: await syncAccess(env) }); } catch (e) { return json({ on: !!on, error: String(e.message || e) }); }
-  }
-  if (req.method === "POST" && action === "allow") {
-    const { email } = await req.json();
-    const blocked = ((await env.KB.get("mirror_blocked", "json")) || []).filter((e) => e !== email);
-    await env.KB.put("mirror_blocked", JSON.stringify(blocked));
-    await audit(env, { kind: "mirror_invite", actor_name: "Rayston", text: `allowed ${email} back into automatic Ads mirror access` });
-    return json({ blocked });
   }
   return json({ error: "Unknown action" }, 400);
 }
