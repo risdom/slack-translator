@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ads Mirror Access</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&display=swap">
+<style>
+  /* Owner's access list: invite on top, then who has a link, each with Copy and Remove. */
+  :root { --bg:#f4f5f7; --panel:#fff; --ink:#1c1e21; --muted:#65676b; --line:#e4e6eb; --accent:#1660d6; --bad:#c2282f; --ok:#1b8a4b; --sans:"Inter Tight",system-ui,sans-serif; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f1115; --panel:#181b21; --ink:#e7e9ee; --muted:#9aa1ad; --line:#2a2f38; --accent:#5c9bff; --bad:#ff6b6b; --ok:#4cc38a; color-scheme:dark; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 var(--sans); }
+  main { max-width:820px; margin:0 auto; padding:24px max(16px, env(safe-area-inset-left)) 48px max(16px, env(safe-area-inset-right)); display:grid; gap:16px; }
+  h1 { margin:0; font-size:22px; } p { margin:0; color:var(--muted); }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; display:grid; gap:12px; }
+  form { display:flex; gap:8px; flex-wrap:wrap; }
+  input { flex:1 1 220px; font:inherit; padding:8px 10px; border:1px solid var(--line); border-radius:6px; background:var(--panel); color:var(--ink); }
+  button { font:inherit; font-weight:600; border:1px solid var(--line); background:var(--panel); color:var(--ink); border-radius:6px; padding:8px 14px; cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.danger { color:var(--bad); }
+  .new { border:1px solid var(--ok); border-radius:8px; padding:10px 12px; display:grid; gap:6px; }
+  .new code, td code { font-size:12px; overflow-wrap:anywhere; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:10px 6px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  th { font-size:12px; color:var(--muted); font-weight:600; }
+  td.act { white-space:nowrap; text-align:right; }
+  .empty { color:var(--muted); padding:12px 6px; }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+</style></head>
+<body><main>
+  <h1>Ads Mirror access</h1>
+  <p>Invite someone to get their own link to the live Ads Mirror (all ads, read-only). Remove access and their link stops working immediately. Every invite, removal and visit is in your bot audit log.</p>
+  <section class="card">
+    <form id="f"><input id="name" placeholder="Name, e.g. Pedro Alvite" aria-label="Name" autocomplete="off"><button class="primary" type="submit">Invite</button></form>
+    <div class="new" id="new" hidden><b id="newWho"></b><code id="newLink"></code><div><button type="button" id="copyNew">Copy link</button></div></div>
+  </section>
+  <section class="card">
+    <table><thead><tr><th>Person</th><th>Invited</th><th>Link</th><th></th></tr></thead><tbody id="list"><tr><td class="empty" colspan="4">Loading…</td></tr></tbody></table>
+  </section>
+</main>
+<script>
+const base = location.pathname.replace(/\/$/, "");
+const copy = async (text, btn) => { try { await navigator.clipboard.writeText(text); btn.textContent = "Copied"; } catch { btn.textContent = "Select the link to copy"; } setTimeout(() => btn.textContent = btn.dataset.label || "Copy link", 1500); };
+async function list() {
+  const rows = await (await fetch(base + "/list", { cache: "no-store" })).json();
+  const tb = document.getElementById("list"); tb.replaceChildren();
+  if (!rows.length) { const tr = document.createElement("tr"); const td = document.createElement("td"); td.className = "empty"; td.colSpan = 4; td.textContent = "Nobody has access yet."; tr.append(td); tb.append(tr); return; }
+  for (const r of rows) {
+    const tr = document.createElement("tr");
+    const n = document.createElement("td"); n.textContent = r.name;
+    const d = document.createElement("td"); d.textContent = new Date(r.invited).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+    const l = document.createElement("td"); const c = document.createElement("code"); c.textContent = r.link; l.append(c);
+    const a = document.createElement("td"); a.className = "act";
+    const cp = document.createElement("button"); cp.type = "button"; cp.textContent = "Copy link"; cp.onclick = () => copy(r.link, cp);
+    const rm = document.createElement("button"); rm.type = "button"; rm.className = "danger"; rm.textContent = "Remove access";
+    rm.onclick = async () => {
+      if (rm.dataset.armed !== "1") { rm.dataset.armed = "1"; rm.textContent = "Click again to remove"; setTimeout(() => { rm.dataset.armed = ""; rm.textContent = "Remove access"; }, 3000); return; }
+      await fetch(base + "/revoke", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: r.token }) }); list();
+    };
+    a.append(cp, document.createTextNode(" "), rm); tr.append(n, d, l, a); tb.append(tr);
+  }
+}
+document.getElementById("f").addEventListener("submit", async (e) => {
+  e.preventDefault(); const name = document.getElementById("name").value.trim(); if (!name) return;
+  const r = await (await fetch(base + "/invite", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name }) })).json();
+  if (r.error) return alertBox(r.error);
+  document.getElementById("new").hidden = false; document.getElementById("newWho").textContent = "Access created for " + r.name + ". Send them this link:";
+  document.getElementById("newLink").textContent = r.link; document.getElementById("copyNew").onclick = (ev) => copy(r.link, ev.target);
+  document.getElementById("name").value = ""; list();
+});
+function alertBox(t) { const n = document.getElementById("new"); n.hidden = false; document.getElementById("newWho").textContent = t; document.getElementById("newLink").textContent = ""; }
+list();
+</script></body></html>

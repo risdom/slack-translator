@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Auvra Ads Mirror</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  /* Ads Manager-style workspace: a control bar, level tabs, then one dense, sortable table with a totals row. */
+  :root { --bg:#f4f5f7; --panel:#fff; --ink:#1c1e21; --muted:#65676b; --line:#e4e6eb; --accent:#1660d6; --accent-soft:#e7f0fd;
+    --ok:#1b8a4b; --warn:#b26a00; --bad:#c2282f; --chip:#f0f2f5; --sans:"Inter Tight",system-ui,-apple-system,"Segoe UI",sans-serif; --mono:"JetBrains Mono",ui-monospace,Menlo,monospace; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f1115; --panel:#181b21; --ink:#e7e9ee; --muted:#9aa1ad; --line:#2a2f38; --accent:#5c9bff; --accent-soft:#1b2a44;
+    --ok:#4cc38a; --warn:#e3a33b; --bad:#ff6b6b; --chip:#232831; color-scheme: dark; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.45 var(--sans); }
+  .wrap { padding: 16px max(16px, env(safe-area-inset-left)) 40px max(16px, env(safe-area-inset-right)); display:grid; gap:12px; }
+  header { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 16px; }
+  h1 { margin:0; font-size:18px; font-weight:700; letter-spacing:-.01em; }
+  h1 span { color:var(--muted); font-weight:500; }
+  .live { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:13px; }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--ok); box-shadow:0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
+  .dot.stale { background:var(--warn); } .dot.err { background:var(--bad); }
+  button, select, input { font:inherit; color:inherit; }
+  .btn { border:1px solid var(--line); background:var(--panel); border-radius:6px; padding:6px 12px; cursor:pointer; font-weight:500; }
+  .btn:hover { border-color:var(--accent); }
+  .bar { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px; display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .bar select, .bar input { border:1px solid var(--line); background:var(--panel); border-radius:6px; padding:6px 8px; min-width:0; }
+  .bar input[type=search] { flex:1 1 220px; }
+  .bar label { font-size:12px; color:var(--muted); display:grid; gap:2px; }
+  .tabs { display:flex; gap:2px; border-bottom:1px solid var(--line); overflow-x:auto; }
+  .tabs button { border:0; background:none; padding:8px 14px; cursor:pointer; color:var(--muted); font-weight:600; border-bottom:2px solid transparent; white-space:nowrap; }
+  .tabs button[aria-selected=true] { color:var(--accent); border-color:var(--accent); }
+  .cols { position:relative; }
+  .colmenu { position:absolute; right:0; top:calc(100% + 4px); z-index:5; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:8px; display:grid; grid-template-columns:repeat(2, minmax(150px,1fr)); gap:2px 12px; box-shadow:0 8px 24px rgb(0 0 0 / .12); width:min(92vw, 380px); }
+  .colmenu label { display:flex; gap:6px; align-items:center; font-size:13px; padding:3px 0; cursor:pointer; }
+  .tablebox { background:var(--panel); border:1px solid var(--line); border-radius:8px; overflow:auto; max-height:calc(100vh - 240px); }
+  table { border-collapse:separate; border-spacing:0; width:100%; font-variant-numeric:tabular-nums; }
+  th, td { padding:8px 10px; border-bottom:1px solid var(--line); text-align:right; white-space:nowrap; }
+  th { position:sticky; top:0; z-index:2; background:var(--panel); font-size:12px; color:var(--muted); font-weight:600; cursor:pointer; user-select:none; }
+  th[aria-sort=ascending]::after { content:" ▲"; } th[aria-sort=descending]::after { content:" ▼"; }
+  th.name, td.name { text-align:left; position:sticky; left:0; background:var(--panel); z-index:1; min-width:280px; max-width:420px; white-space:normal; }
+  th.name { z-index:3; }
+  tr.total td { font-weight:600; background:var(--chip); position:sticky; top:33px; z-index:2; }
+  tr.total td.name { background:var(--chip); }
+  tr.group td { background:var(--accent-soft); font-weight:600; }
+  tr.group td.name { background:var(--accent-soft); }
+  .ad { display:grid; grid-template-columns:40px 1fr; gap:10px; align-items:center; }
+  .thumb { width:40px; height:40px; border-radius:6px; object-fit:cover; background:var(--chip); }
+  .adname { font-weight:500; overflow-wrap:anywhere; font-size:13px; }
+  .sub { font-size:12px; color:var(--muted); overflow-wrap:anywhere; }
+  .sub a { color:var(--accent); text-decoration:none; } .sub a:hover { text-decoration:underline; }
+  .chip { display:inline-block; font-size:11px; font-weight:600; padding:1px 7px; border-radius:99px; background:var(--chip); color:var(--muted); margin-right:6px; vertical-align:1px; }
+  .chip.ACTIVE { color:var(--ok); background:color-mix(in srgb, var(--ok) 14%, transparent); }
+  .chip.DISAPPROVED, .chip.WITH_ISSUES { color:var(--bad); background:color-mix(in srgb, var(--bad) 14%, transparent); }
+  .chip.IN_PROCESS, .chip.PENDING_REVIEW, .chip.PREAPPROVED { color:var(--warn); background:color-mix(in srgb, var(--warn) 16%, transparent); }
+  .note { color:var(--muted); font-size:12px; margin:0; }
+  .msg { padding:24px; text-align:center; color:var(--muted); }
+  .err { color:var(--bad); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+  @media (max-width:700px) { th.name, td.name { min-width:200px; } }
+</style></head>
+<body><div class="wrap">
+  <header>
+    <h1>Auvra Ads Mirror <span>· viewing as __WHO__</span></h1>
+    <div class="live"><i class="dot" id="dot"></i><span id="updated">Loading…</span><button class="btn" id="refresh" type="button">Refresh</button></div>
+  </header>
+
+  <div class="bar">
+    <label>Date range<select id="preset">
+      <option value="today">Today</option><option value="yesterday">Yesterday</option><option value="last_3d">Last 3 days</option>
+      <option value="last_7d" selected>Last 7 days</option><option value="last_14d">Last 14 days</option><option value="last_30d">Last 30 days</option>
+      <option value="this_month">This month</option><option value="last_month">Last month</option><option value="maximum">Maximum</option><option value="custom">Custom…</option></select></label>
+    <label id="sinceL" hidden>From<input type="date" id="since"></label>
+    <label id="untilL" hidden>To<input type="date" id="until"></label>
+    <label>Strategist<select id="cs"><option value="">All strategists</option></select></label>
+    <label>Campaign<select id="campaign"><option value="">All campaigns</option></select></label>
+    <label>Ad set<select id="adset"><option value="">All ad sets</option></select></label>
+    <label>Delivery<select id="status"><option value="">All</option><option value="ACTIVE">Active</option><option value="REVIEW">In review</option><option value="REJECTED">Rejected / issues</option><option value="OFF">Off</option></select></label>
+    <input type="search" id="q" placeholder="Search by name…" aria-label="Search by name">
+    <div class="cols"><button class="btn" id="colsBtn" type="button" aria-expanded="false">Columns</button><div class="colmenu" id="colmenu" hidden></div></div>
+  </div>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" data-level="ad" aria-selected="true">Ads</button>
+    <button role="tab" data-level="adset" aria-selected="false">Ad sets</button>
+    <button role="tab" data-level="campaign" aria-selected="false">Campaigns</button>
+    <button role="tab" data-level="hook" aria-selected="false">Hooks (H1/H2/H3)</button>
+  </div>
+
+  <div class="tablebox"><table><thead><tr id="head"></tr></thead><tbody id="body"><tr><td class="msg" colspan="20">Loading live data from Meta…</td></tr></tbody></table></div>
+  <p class="note">Live from Meta: refreshes every 2 minutes (Meta's own numbers can lag a few minutes). Hook rate = 3-second video views ÷ impressions. Hold rate = ThruPlays ÷ 3-second views. CTR and CPC use link clicks. Read-only: changes are made in Ads Manager.</p>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+const COLS = [
+  ["spend","Amount spent","$"],["impressions","Impressions","n"],["reach","Reach","n"],["frequency","Frequency","f"],["cpm","CPM","$"],
+  ["link_clicks","Link clicks","n"],["ctr","CTR (link)","%"],["cpc","CPC (link)","$"],["lpv","Landing page views","n"],["atc","Adds to cart","n"],
+  ["cost_atc","Cost per add to cart","$"],["checkouts","Checkouts initiated","n"],["purchases","Purchases","n"],["cpa","Cost per purchase","$"],
+  ["revenue","Purchase value","$"],["roas","ROAS","x"],["hook","Hook rate","%"],["hold","Hold rate","%"]];
+const DEFAULT = ["spend","impressions","cpm","ctr","cpc","atc","purchases","cpa","roas","hook","hold"];
+let shown; try { shown = JSON.parse(localStorage.getItem("mirror-cols")) || DEFAULT; } catch { shown = DEFAULT; }
+let data = null, level = "ad", sort = { key: "spend", dir: -1 }, timer = null;
+const fmt = { "$": (v) => v == null ? "—" : "$" + v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+  n: (v) => v == null ? "—" : Math.round(v).toLocaleString("en-US"), f: (v) => v == null ? "—" : v.toFixed(2),
+  "%": (v) => v == null ? "—" : (v * 100).toFixed(2) + "%", x: (v) => v == null ? "—" : v.toFixed(2) };
+const SUMS = ["spend","impressions","reach","link_clicks","lpv","atc","checkouts","purchases","revenue","video3s","thruplay"];
+function derive(r) {
+  const d = (a, b) => (b ? a / b : null);
+  return { ...r, cpm: d(r.spend * 1000, r.impressions), ctr: d(r.link_clicks, r.impressions), cpc: d(r.spend, r.link_clicks), cost_atc: d(r.spend, r.atc),
+    cpa: d(r.spend, r.purchases), roas: d(r.revenue, r.spend), hook: d(r.video3s, r.impressions), hold: d(r.thruplay, r.video3s),
+    frequency: r.reach ? r.impressions / r.reach : null };
+}
+function sum(rows, extra) { const t = { ...extra }; for (const k of SUMS) t[k] = rows.reduce((s, r) => s + (r[k] || 0), 0); return derive(t); }
+function ownerOf(r) {
+  const S = data.strategists || {}, up = (s) => (s || "").toUpperCase();
+  for (const [cs, rule] of Object.entries(S)) if ((rule.ad || []).some((p) => up(r.name).startsWith(up(p))) || (rule.adset || []).some((p) => up(r.adset).startsWith(up(p)))) return cs;
+  return "Other";
+}
+const deliv = (s) => s === "ACTIVE" ? "ACTIVE" : ["IN_PROCESS","PENDING_REVIEW","PREAPPROVED"].includes(s) ? "REVIEW" : ["DISAPPROVED","WITH_ISSUES"].includes(s) ? "REJECTED" : "OFF";
+const LABEL = { ACTIVE: "Active", IN_PROCESS: "In review", PENDING_REVIEW: "In review", PREAPPROVED: "In review", DISAPPROVED: "Rejected", WITH_ISSUES: "Issue", OFF: "Off" };
+function filtered() {
+  const q = $("q").value.trim().toLowerCase(), cs = $("cs").value, c = $("campaign").value, a = $("adset").value, st = $("status").value;
+  return data.rows.filter((r) => (!cs || r._cs === cs) && (!c || r.campaign === c) && (!a || r.adset === a) && (!st || deliv(r.status) === st)
+    && (!q || (r.name + " " + r.adset + " " + r.campaign).toLowerCase().includes(q)));
+}
+function fillSelect(id, values, keep) {
+  const el = $(id), cur = el.value, first = el.options[0];
+  el.replaceChildren(first, ...[...new Set(values)].filter(Boolean).sort().map((v) => new Option(v, v)));
+  el.value = [...el.options].some((o) => o.value === cur) ? cur : "";
+}
+function cell(tag, text, cls) { const e = document.createElement(tag); if (cls) e.className = cls; e.textContent = text; return e; }
+function nameCell(r, kind) {
+  const td = document.createElement("td"); td.className = "name";
+  if (kind === "ad") {
+    const box = document.createElement("div"); box.className = "ad";
+    const img = document.createElement("img"); img.className = "thumb"; img.alt = ""; img.loading = "lazy"; if (r.thumb) img.src = r.thumb;
+    const t = document.createElement("div");
+    const n = cell("div", r.name, "adname");
+    const sub = document.createElement("div"); sub.className = "sub";
+    sub.append(cell("span", LABEL[r.status] || "Off", "chip " + (r.status || "OFF")), document.createTextNode(r.adset + " · "));
+    if (r.preview) { const a = document.createElement("a"); a.href = r.preview; a.target = "_blank"; a.rel = "noopener"; a.textContent = "Preview ↗"; sub.append(a); }
+    t.append(n, sub); box.append(img, t); td.append(box);
+  } else { td.append(cell("div", r.name, "adname")); if (r.sub) td.append(cell("div", r.sub, "sub")); }
+  return td;
+}
+function rowEl(r, kind, cls) {
+  const tr = document.createElement("tr"); if (cls) tr.className = cls;
+  tr.append(nameCell(r, kind));
+  for (const [k, , f] of COLS) if (shown.includes(k)) tr.append(cell("td", fmt[f](r[k])));
+  return tr;
+}
+function group(rows, key, sub) {
+  const m = new Map();
+  for (const r of rows) { const k = key(r); if (!m.has(k)) m.set(k, []); m.get(k).push(r); }
+  return [...m].map(([k, rs]) => sum(rs, { name: k, sub: sub ? sub(rs) : "" }));
+}
+const bySort = (a, b) => { const x = sort.key === "name" ? a.name : a[sort.key], y = sort.key === "name" ? b.name : b[sort.key];
+  if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1; return (x > y ? 1 : x < y ? -1 : 0) * sort.dir; };
+function render() {
+  const head = $("head"); head.replaceChildren();
+  const names = { ad: "Ad name", adset: "Ad set", campaign: "Campaign", hook: "Batch / hook" };
+  const hs = [["name", names[level]], ...COLS.filter(([k]) => shown.includes(k)).map(([k, l]) => [k, l])];
+  for (const [k, l] of hs) { const th = cell("th", l, k === "name" ? "name" : ""); th.dataset.key = k;
+    th.setAttribute("aria-sort", sort.key === k ? (sort.dir > 0 ? "ascending" : "descending") : "none"); head.append(th); }
+  const body = $("body"); body.replaceChildren();
+  if (!data) return;
+  const rows = filtered().map(derive);
+  if (!rows.length) { const tr = document.createElement("tr"); const td = cell("td", "No ads match these filters.", "msg"); td.colSpan = hs.length; tr.append(td); body.append(tr); return; }
+  const total = sum(rows, { name: `Results from ${rows.length} ads` });
+  body.append(rowEl(total, "total", "total"));
+  if (level === "ad") rows.sort(bySort).forEach((r) => body.append(rowEl(r, "ad")));
+  if (level === "adset") group(rows, (r) => r.adset, (rs) => `${rs[0].campaign} · ${rs.length} ads`).sort(bySort).forEach((r) => body.append(rowEl(r, "x")));
+  if (level === "campaign") group(rows, (r) => r.campaign, (rs) => `${new Set(rs.map((x) => x.adset)).size} ad sets · ${rs.length} ads`).sort(bySort).forEach((r) => body.append(rowEl(r, "x")));
+  if (level === "hook") {
+    const batch = (r) => r.name.replace(/H\d+(?:-H\d+)*(?=_)/, "").replace(/#/g, "");
+    const batches = group(rows, batch, (rs) => `${rs.length} hook ads`).sort(bySort);
+    for (const b of batches) {
+      body.append(rowEl({ ...b, name: b.name }, "x", "group"));
+      const hooks = rows.filter((r) => batch(r) === b.name);
+      group(hooks, (r) => (r.name.match(/H(\d+(?:-H\d+)*)(?=_)/) || [, "—"])[1].replace(/^/, "H").replace(/-H/g, "+H"), (rs) => rs.map((x) => LABEL[x.status] || "Off").join(", "))
+        .sort(bySort).forEach((h) => body.append(rowEl(h, "x")));
+    }
+  }
+}
+function colMenu() {
+  const m = $("colmenu"); m.replaceChildren();
+  for (const [k, l] of COLS) { const lab = document.createElement("label"); const cb = document.createElement("input"); cb.type = "checkbox"; cb.checked = shown.includes(k); cb.id = "col-" + k;
+    cb.addEventListener("change", () => { shown = COLS.map(([x]) => x).filter((x) => x === k ? cb.checked : shown.includes(x)); try { localStorage.setItem("mirror-cols", JSON.stringify(shown)); } catch {} render(); });
+    lab.append(cb, document.createTextNode(l)); m.append(lab); }
+}
+async function load(force) {
+  const p = $("preset").value, qs = new URLSearchParams(p === "custom" ? { since: $("since").value, until: $("until").value } : { preset: p });
+  if (p === "custom" && (!$("since").value || !$("until").value)) return;
+  $("dot").className = "dot stale"; $("updated").textContent = "Updating…";
+  try {
+    const r = await fetch(location.pathname.replace(/\/$/, "") + "/data?" + qs + (force ? "&t=" + Date.now() : ""), { cache: "no-store" });
+    const j = await r.json(); if (j.error) throw new Error(j.error);
+    data = j; for (const row of data.rows) row._cs = ownerOf(row);
+    fillSelect("cs", [...Object.keys(data.strategists || {}), "Other"]); fillSelect("campaign", data.rows.map((r) => r.campaign)); fillSelect("adset", data.rows.map((r) => r.adset));
+    $("dot").className = "dot"; $("updated").textContent = "Live · updated " + new Date(j.fetched).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    render();
+  } catch (e) { $("dot").className = "dot err"; $("updated").textContent = String(e.message || e); }
+}
+$("head").addEventListener("click", (e) => { const th = e.target.closest("th"); if (!th) return; const k = th.dataset.key;
+  sort = { key: k, dir: sort.key === k ? -sort.dir : (k === "name" ? 1 : -1) }; render(); });
+document.querySelector(".tabs").addEventListener("click", (e) => { const b = e.target.closest("button"); if (!b) return; level = b.dataset.level;
+  document.querySelectorAll(".tabs button").forEach((x) => x.setAttribute("aria-selected", String(x === b))); render(); });
+$("preset").addEventListener("change", () => { const c = $("preset").value === "custom"; $("sinceL").hidden = !c; $("untilL").hidden = !c; if (!c) load(); });
+for (const id of ["since", "until"]) $(id).addEventListener("change", () => load());
+for (const id of ["cs", "campaign", "adset", "status"]) $(id).addEventListener("change", render);
+$("q").addEventListener("input", render);
+$("refresh").addEventListener("click", () => load(true));
+$("colsBtn").addEventListener("click", () => { const m = $("colmenu"); m.hidden = !m.hidden; $("colsBtn").setAttribute("aria-expanded", String(!m.hidden)); });
+document.addEventListener("click", (e) => { if (!e.target.closest(".cols")) $("colmenu").hidden = true; });
+colMenu(); render(); load();
+timer = setInterval(() => { if (!document.hidden) load(); }, 120000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
+</script></body></html>

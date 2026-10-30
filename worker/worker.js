@@ -11,6 +11,7 @@
 import { syncNotion } from "./notion.js";
 import { audit, askFlag, botActivity, dailySummary, auditApi, keyGuard } from "./audit.js";
 import { adWatch, appealApi } from "./adwatch.js";
+import { mirror, mirrorAdmin } from "./mirror.js";
 
 const MODEL = "@cf/mistralai/mistral-small-3.1-24b-instruct";
 const BOT_USER = "U0CBNC9MKMK";   // Auvra Reports
@@ -26,6 +27,8 @@ export default {
   async fetch(req, env, ctx) {
     const path = new URL(req.url).pathname;
     if (req.method === "GET" && path === "/audit") return auditApi(req, env);
+    if (path.startsWith("/ads/")) return mirror(req, env, ctx);
+    if (path.startsWith("/ads-admin/")) return mirrorAdmin(req, env, ctx);
     if (req.method === "POST" && (path === "/adcheck" || path === "/appealed"))
       return (await keyGuard(req, env)) || appealApi(req, env, path);
     if (req.method !== "POST") return new Response("slack-translator is running");
