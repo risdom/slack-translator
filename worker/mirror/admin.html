@@ -7,6 +7,7 @@
   :root { --bg:#f4f5f7; --panel:#fff; --ink:#1c1e21; --muted:#65676b; --line:#e4e6eb; --accent:#1660d6; --bad:#c2282f; --ok:#1b8a4b; --sans:"Inter Tight",system-ui,sans-serif; }
   @media (prefers-color-scheme: dark) { :root { --bg:#0f1115; --panel:#181b21; --ink:#e7e9ee; --muted:#9aa1ad; --line:#2a2f38; --accent:#5c9bff; --bad:#ff6b6b; --ok:#4cc38a; color-scheme:dark; } }
   * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
   body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 var(--sans); }
   main { max-width:820px; margin:0 auto; padding:24px max(16px, env(safe-area-inset-left)) 48px max(16px, env(safe-area-inset-right)); display:grid; gap:16px; }
   h1 { margin:0; font-size:22px; } p { margin:0; color:var(--muted); }

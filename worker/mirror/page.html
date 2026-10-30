@@ -9,6 +9,7 @@
   @media (prefers-color-scheme: dark) { :root { --bg:#0f1115; --panel:#181b21; --ink:#e7e9ee; --muted:#9aa1ad; --line:#2a2f38; --accent:#5c9bff; --accent-soft:#1b2a44;
     --ok:#4cc38a; --warn:#e3a33b; --bad:#ff6b6b; --chip:#232831; color-scheme: dark; } }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.45 var(--sans); }
   .wrap { padding: 16px max(16px, env(safe-area-inset-left)) 40px max(16px, env(safe-area-inset-right)); display:grid; gap:12px; }
   header { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px 16px; }
@@ -170,10 +171,12 @@ function render() {
   if (level === "campaign") group(rows, (r) => r.campaign, (rs) => `${new Set(rs.map((x) => x.adset)).size} ad sets · ${rs.length} ads`).sort(bySort).forEach((r) => body.append(rowEl(r, "x")));
   if (level === "hook") {
     const batch = (r) => r.name.replace(/H\d+(?:-H\d+)*(?=_)/, "").replace(/#/g, "");
-    const batches = group(rows, batch, (rs) => `${rs.length} hook ads`).sort(bySort);
+    const hooked = rows.filter((r) => /BATCH\d*#?H\d+|_B\d+H\d+/i.test(r.name));   // only ads named with the CS_BATCH#H# convention
+    if (!hooked.length) { const tr = document.createElement("tr"); const td = cell("td", "No ads in this view use the CS_BATCH#H1/H2/H3 naming yet.", "msg"); td.colSpan = hs.length; tr.append(td); body.append(tr); return; }
+    const batches = group(hooked, batch, (rs) => `${rs.length} hook ads`).sort(bySort);
     for (const b of batches) {
       body.append(rowEl({ ...b, name: b.name }, "x", "group"));
-      const hooks = rows.filter((r) => batch(r) === b.name);
+      const hooks = hooked.filter((r) => batch(r) === b.name);
       group(hooks, (r) => (r.name.match(/H(\d+(?:-H\d+)*)(?=_)/) || [, "—"])[1].replace(/^/, "H").replace(/-H/g, "+H"), (rs) => rs.map((x) => LABEL[x.status] || "Off").join(", "))
         .sort(bySort).forEach((h) => body.append(rowEl(h, "x")));
     }
