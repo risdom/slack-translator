@@ -9,7 +9,8 @@
 // Secrets: SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, TRANSLATE_CHANNELS ({channel_id: name}), OWNER (Slack user ID), NOTION_TOKEN, AUDIT_KEY.
 
 import { syncNotion } from "./notion.js";
-import { audit, askFlag, botActivity, dailySummary, auditApi } from "./audit.js";
+import { audit, askFlag, botActivity, dailySummary, auditApi, keyGuard } from "./audit.js";
+import { adWatch, appealApi } from "./adwatch.js";
 
 const MODEL = "@cf/mistralai/mistral-small-3.1-24b-instruct";
 const BOT_USER = "U0CBNC9MKMK";   // Auvra Reports
@@ -23,7 +24,10 @@ const names = new Map(); // user ID -> display name, kept for the life of the is
 
 export default {
   async fetch(req, env, ctx) {
-    if (req.method === "GET" && new URL(req.url).pathname === "/audit") return auditApi(req, env);
+    const path = new URL(req.url).pathname;
+    if (req.method === "GET" && path === "/audit") return auditApi(req, env);
+    if (req.method === "POST" && (path === "/adcheck" || path === "/appealed"))
+      return (await keyGuard(req, env)) || appealApi(req, env, path);
     if (req.method !== "POST") return new Response("slack-translator is running");
     const raw = await req.text();
     if (!(await verified(req, raw, env.SLACK_SIGNING_SECRET))) {
@@ -43,7 +47,10 @@ export default {
   async scheduled(event, env, ctx) {
     const log = e => console.log("cron error", e.stack || String(e));
     if (event.cron === "0 1 * * *") ctx.waitUntil(dailySummary(env, slack).catch(log));
-    else ctx.waitUntil(syncNotion(env).catch(e => { log(e); return audit(env, { kind: "error", text: "Notion sync: " + String(e).slice(0, 300) }); }));
+    else ctx.waitUntil(Promise.all([
+      syncNotion(env).catch(e => { log(e); return audit(env, { kind: "error", text: "Notion sync: " + String(e).slice(0, 300) }); }),
+      adWatch(env, slack).catch(e => { log(e); return audit(env, { kind: "error", text: "Rejected-ads watchdog: " + String(e).slice(0, 300), flag: "watchdog crashed" }); }),
+    ]));
   },
 };
 

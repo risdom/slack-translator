@@ -3,7 +3,7 @@
 // Free Workers allow ~50 outbound requests per run, so each run refetches only pages edited since last time, within a budget.
 
 const NOTION = "https://api.notion.com/v1";
-const BUDGET = 40;   // Notion requests per run
+const BUDGET = 36;   // Notion requests per run (free plan ~50 subrequests; leave room for Slack calls)
 
 export async function syncNotion(env) {
   let calls = 0;

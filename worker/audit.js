@@ -45,10 +45,19 @@ export async function dailySummary(env, slack) {
 }
 
 // GET /audit?key=...&days=N -> JSON rows, for the audit artifact page. Key = AUDIT_KEY secret.
-export async function auditApi(req, env) {
-  const u = new URL(req.url), key = u.searchParams.get("key") || "";
+// The AUDIT_KEY guard shared by /audit, /rejected and /appealed: null when the key is right, else a logged 403.
+export async function keyGuard(req, env) {
+  const key = new URL(req.url).searchParams.get("key") || "";
   const ok = env.AUDIT_KEY && key.length === env.AUDIT_KEY.length && [...key].reduce((d, c, i) => d | (c.charCodeAt(0) ^ env.AUDIT_KEY.charCodeAt(i)), 0) === 0;
-  if (!ok) { await audit(env, { kind: "bad_signature", text: "wrong audit key from " + (req.headers.get("cf-connecting-ip") || "?"), flag: "someone tried to read the audit log" }); return new Response("forbidden", { status: 403 }); }
+  if (ok) return null;
+  await audit(env, { kind: "bad_signature", text: `wrong key on ${new URL(req.url).pathname} from ` + (req.headers.get("cf-connecting-ip") || "?"), flag: "someone tried to use the bot's private endpoints" });
+  return new Response("forbidden", { status: 403 });
+}
+
+export async function auditApi(req, env) {
+  const denied = await keyGuard(req, env);
+  if (denied) return denied;
+  const u = new URL(req.url);
   const days = Math.min(180, Number(u.searchParams.get("days")) || 30);
   const { results } = await env.AUDIT.prepare("SELECT id,ts,kind,actor_id,actor_name,channel_id,channel_name,text,flag FROM events WHERE ts >= ? ORDER BY ts DESC LIMIT 5000")
     .bind(new Date(Date.now() - days * 864e5).toISOString()).all();
